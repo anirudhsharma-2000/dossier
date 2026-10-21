@@ -1,0 +1,63 @@
+import type { Metadata } from "next";
+
+import { BrandMark } from "@/components/brand-mark";
+import { verifySession } from "@/lib/auth/session";
+
+import { Consent } from "./consent";
+import { checkAuthorizeRequest } from "./request";
+
+export const metadata: Metadata = { title: "Connect Claude" };
+
+/**
+ * Claude asks to use Dossier (the connector, src/app/api/mcp). Signed-out
+ * visitors sign in first (the proxy sends them to /login and back here).
+ */
+export default async function AuthorizePage({ searchParams }: PageProps<"/oauth/authorize">) {
+  await verifySession();
+  const params = await searchParams;
+  const checked = await checkAuthorizeRequest(params);
+  const one = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value) ?? "";
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-surface px-8 py-12">
+      <div className="flex w-full max-w-[460px] flex-col gap-6">
+        <div className="flex items-center gap-3">
+          <BrandMark className="size-10" />
+          <div className="font-serif text-[26px] font-medium tracking-[-0.01em]">Connect Claude to Dossier</div>
+        </div>
+        {"error" in checked ? (
+          <p role="alert" className="rounded-control bg-danger-surface px-3 py-2 text-sm text-error">
+            {checked.error}
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-col gap-3 text-sm leading-[1.6] text-pretty">
+              <p>
+                <strong>{checked.clientName}</strong> wants to use your Dossier. Once you allow it, Claude can:
+              </p>
+              <ul className="list-disc pl-5 text-muted">
+                <li>search for jobs with your job source, and see your saved postings</li>
+                <li>read your profile and your applications, with their resumes and cover letters</li>
+                <li>draft new applications and change their status</li>
+              </ul>
+              <p className="text-muted">
+                It will send you back to <strong className="text-ink">{new URL(checked.redirectUri).host}</strong>. It can never send an
+                application or an email for you. Changing <code className="font-mono text-label">DOSSIER_PASSWORD</code> disconnects it.
+              </p>
+            </div>
+            <Consent
+              request={{
+                client_id: checked.clientId,
+                redirect_uri: checked.redirectUri,
+                code_challenge: checked.codeChallenge,
+                code_challenge_method: one(params.code_challenge_method),
+                state: checked.state,
+                resource: checked.resource,
+              }}
+            />
+          </>
+        )}
+      </div>
+    </main>
+  );
+}

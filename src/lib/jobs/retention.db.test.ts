@@ -1,7 +1,3 @@
-import { mkdir, mkdtemp, readdir, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { saveSettings } from "@/lib/settings-data";
@@ -15,8 +11,7 @@ vi.mock("@/lib/prisma", async () => {
   db.client = createTestClient();
   return { prisma: db.client };
 });
-const dataDir = vi.hoisted(() => ({ path: "" }));
-vi.mock("@/lib/env", () => ({ env: { get DOSSIER_DATA_DIR() { return dataDir.path; }, DOSSIER_SECRET: "s".repeat(32) } }));
+vi.mock("@/lib/env", () => ({ env: { DOSSIER_SECRET: "s".repeat(32) } }));
 
 const prisma = () => db.client!;
 const now = new Date("2026-10-18T12:00:00Z");
@@ -24,7 +19,6 @@ const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1
 const left = async () => (await prisma().job.findMany({ select: { id: true }, orderBy: { id: "asc" } })).map((job) => job.id);
 
 beforeEach(async () => {
-  dataDir.path = await mkdtemp(path.join(tmpdir(), "dossier-sweep-"));
   await resetDatabase(prisma());
   await prisma().job.createMany({
     data: [
@@ -62,13 +56,9 @@ describe("sweepFinishedJobs", () => {
   });
 
   it("removes zips nobody downloaded", async () => {
-    const downloads = path.join(dataDir.path, "downloads");
-    await mkdir(downloads, { recursive: true });
-    await writeFile(path.join(downloads, "old.zip"), "zip");
-    await writeFile(path.join(downloads, "new.zip"), "zip");
-    await utimes(path.join(downloads, "old.zip"), hoursAgo(2), hoursAgo(2));
-    await utimes(path.join(downloads, "new.zip"), now, now);
+    const zip = (name: string, createdAt: Date) => ({ kind: "download", name, contentType: "application/zip", data: Buffer.from("zip"), createdAt });
+    await prisma().storedFile.createMany({ data: [zip("old.zip", hoursAgo(2)), zip("new.zip", now)] });
     await sweepFinishedJobs(now);
-    expect(await readdir(downloads)).toEqual(["new.zip"]);
+    expect((await prisma().storedFile.findMany({ select: { name: true } })).map((file) => file.name)).toEqual(["new.zip"]);
   });
 });

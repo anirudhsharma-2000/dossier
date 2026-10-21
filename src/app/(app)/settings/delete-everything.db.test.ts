@@ -1,7 +1,3 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildExport } from "@/lib/data-export";
@@ -33,17 +29,13 @@ vi.mock("next/navigation", () => ({
     if ((error as { digest?: string }).digest?.startsWith("NEXT_REDIRECT")) throw error;
   },
 }));
-const dataDir = vi.hoisted(() => ({ path: "" }));
-vi.mock("@/lib/env", () => ({ env: { get DOSSIER_DATA_DIR() { return dataDir.path; }, DOSSIER_SECRET: "s".repeat(32) } }));
+vi.mock("@/lib/env", () => ({ env: { DOSSIER_SECRET: "s".repeat(32) } }));
 
 const prisma = () => db.client!;
 const now = new Date(2026, 8, 28, 12);
 const snapshot = async () => JSON.stringify({ ...(await buildExport(prisma(), { now })), exportedAt: null });
 
 beforeEach(async () => {
-  dataDir.path = await mkdtemp(path.join(tmpdir(), "dossier-delete-"));
-  await mkdir(path.join(dataDir.path, "backups"));
-  await writeFile(path.join(dataDir.path, "backups", "dossier-backup-nightly-2026-09-27-030000.json"), "{}");
   redirected.to = "";
   await resetDatabase(prisma());
   await seedBuiltIns(prisma());
@@ -51,9 +43,14 @@ beforeEach(async () => {
   await prisma().theme.create({ data: { id: "mine", name: "Mine", headFont: "GEIST", bodyFont: "GEIST", accent: "#224466" } });
   await prisma().setting.create({ data: { key: "paper", value: "LETTER" } });
   await prisma().job.create({ data: { type: "refine", key: "refine:x", status: "DONE", input: {} } });
+  await prisma().storedFile.createMany({
+    data: [
+      { kind: "backup", name: "dossier-backup-nightly-2026-09-27-030000.json", contentType: "application/json", data: Buffer.from("{}") },
+      { kind: "download", name: "abc.zip", contentType: "application/zip", data: Buffer.from("PK") },
+    ],
+  });
 });
 afterAll(async () => {
-  await rm(dataDir.path, { recursive: true, force: true });
   await prisma().$disconnect();
 });
 
@@ -84,7 +81,7 @@ describe("deleteEverything (E10-8)", () => {
     ]);
     expect(counts).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     expect(await prisma().theme.count({ where: { builtIn: true } })).toBe(12);
-    expect(await readdir(dataDir.path)).toEqual([]);
+    expect(await prisma().storedFile.count()).toBe(0);
   });
 
   it("does nothing without DELETE typed exactly", async () => {

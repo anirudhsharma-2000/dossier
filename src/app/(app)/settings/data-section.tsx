@@ -26,7 +26,7 @@ type ZipResult = { file: string; fileName: string; documents: number };
 export type BackupStatus = {
   on: boolean;
   retentionDays: number;
-  /** DOSSIER_DATA_DIR/backups */
+  /** Where backups are kept, in words, e.g. "the database". */
   dir: string;
   /** "today at 03:00", or null before the first one. */
   lastRun: string | null;
@@ -260,6 +260,11 @@ export function DataSection({
             checked={nightly}
             onCheckedChange={switchBackups}
           />
+          {backups.lastRun && (
+            <a href="/api/backups/latest" download className="w-fit text-meta font-medium text-ink underline underline-offset-2">
+              Download the latest backup
+            </a>
+          )}
           {nightly && backups.problem && (
             <p role="alert" className="rounded-control bg-danger-surface px-3 py-2 text-meta text-error">
               The last backup failed: {backups.problem}

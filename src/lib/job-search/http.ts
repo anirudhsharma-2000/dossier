@@ -10,13 +10,17 @@ import type { JobSource } from "./search";
 export const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_BYTES = 5 * 1024 * 1024;
 
-/** GETs JSON from a source, turning every failure into a JobSearchError. */
+/**
+ * GETs JSON from a source, turning every failure into a JobSearchError. A
+ * refused request's detail, for the log, adds the source's own short error
+ * message when it sends one, so a changed API can be told from a wrong one.
+ */
 export async function requestJson(
   source: JobSource,
   url: URL,
-  { headers = {}, signal }: { headers?: Record<string, string>; signal?: AbortSignal } = {},
+  { headers = {}, signal, timeoutMs = REQUEST_TIMEOUT_MS }: { headers?: Record<string, string>; signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<unknown> {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(timeoutMs);
   let response: Response;
   try {
     response = await fetch(url, {
@@ -29,7 +33,11 @@ export async function requestJson(
     throw jobSearchError("unavailable", source, { detail: `${url.pathname}: ${reason}` });
   }
 
-  const detail = `${url.pathname}: HTTP ${response.status}`;
+  let detail = `${url.pathname}: HTTP ${response.status}`;
+  if (!response.ok) {
+    const said = errorMessageOf(await readLimited(response, 64 * 1024).catch(() => null));
+    if (said) detail += ` (${said})`;
+  }
   if (response.status === 401 || response.status === 403) throw jobSearchError("key", source, { detail });
   if (response.status === 429) throw jobSearchError("quota", source, { detail });
   if (!response.ok) throw jobSearchError(response.status >= 500 ? "unavailable" : "changed", source, { detail });
@@ -41,6 +49,21 @@ export async function requestJson(
   } catch {
     throw jobSearchError("changed", source, { detail: `${url.pathname}: not JSON` });
   }
+}
+
+/** A source's own error message from a refused request's body, shortened; empty without one. */
+function errorMessageOf(body: string | null): string {
+  if (!body) return "";
+  let said: unknown = body;
+  try {
+    const parsed = JSON.parse(body) as { message?: unknown; error?: unknown };
+    const error = parsed.error as { message?: unknown } | string | undefined;
+    said = parsed.message ?? (typeof error === "string" ? error : error?.message) ?? "";
+  } catch {
+    // Not JSON: an HTML error page says nothing useful.
+    if (/^\s*</.test(body)) return "";
+  }
+  return typeof said === "string" ? said.replace(/\s+/g, " ").trim().slice(0, 160) : "";
 }
 
 /** The body as text, or null when it's bigger than `limit` bytes. */

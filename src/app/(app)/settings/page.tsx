@@ -7,7 +7,7 @@ import { COUNTRIES } from "@/lib/job-search/countries";
 import { loadSearch } from "@/lib/posting-searches";
 import { providerOption } from "@/lib/ai/provider-options";
 import { lastNightlyBackup } from "@/lib/backup-schedule";
-import { backupsDir } from "@/lib/backups";
+import { BACKUPS_WHERE } from "@/lib/backups";
 import { exportFileName } from "@/lib/data-export";
 import { formatShortDate } from "@/lib/dates";
 import { env } from "@/lib/env";
@@ -98,7 +98,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
           backups={{
             on: settings.nightlyBackup,
             retentionDays: env.DOSSIER_BACKUP_RETENTION_DAYS,
-            dir: backupsDir(),
+            dir: BACKUPS_WHERE,
             lastRun: whenRan(await lastNightlyBackup()),
             problem: settings.backupProblem,
           }}

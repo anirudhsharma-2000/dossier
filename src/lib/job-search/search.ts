@@ -48,6 +48,12 @@ export const searchQuerySchema = z.object({
     .regex(/^([a-z]{2})?$/),
   radiusKm: z.literal(RADII_KM),
   remoteOnly: z.boolean(),
+  /**
+   * With a place: also remote postings anywhere in the country, searched
+   * alongside the place and merged (e.g. Bangalore plus remote in India).
+   * Ignored with Remote only or without a place.
+   */
+  alsoRemote: z.boolean().optional(),
   postedWithin: z.enum(POSTED_VALUES),
 });
 export type SearchQuery = z.output<typeof searchQuerySchema>;
@@ -130,11 +136,14 @@ export type PastSearchDay = {
   searches: { id: string; source: JobSource; query: SearchQuery; found: number; time: string }[];
 };
 
+/** Whether a search also takes in remote postings across the country, besides its place. */
+export const plusRemote = (query: SearchQuery): boolean => Boolean(query.alsoRemote && query.place && !query.remoteOnly);
+
 /** "product designer · Hamburg, 25 km · Remote only · Past week": a search in a line. */
 export function describeSearch(query: SearchQuery, countryName: string): string {
   const where = query.place ? `${query.place}, ${query.radiusKm} km` : countryName;
   const posted = POSTED_WITHIN.find((option) => option.value === query.postedWithin);
-  return [query.keywords, where, query.remoteOnly ? "Remote only" : "", posted && posted.value !== "any" ? posted.label : ""].filter(Boolean).join(" · ");
+  return [query.keywords, where, query.remoteOnly ? "Remote only" : plusRemote(query) ? "Plus remote" : "", posted && posted.value !== "any" ? posted.label : ""].filter(Boolean).join(" · ");
 }
 
 /** Identifies a posting across searches. */
@@ -189,6 +198,7 @@ export function queryFromParams(params: Record<string, string | string[] | undef
     country: /^[a-z]{2}$/.test(country) ? country : "",
     radiusKm: RADII_KM.find((km) => km === radius) ?? DEFAULT_RADIUS_KM,
     remoteOnly: one(params.remote) === "1",
+    ...(one(params.plusremote) === "1" ? { alsoRemote: true } : {}),
     postedWithin: posted ?? "any",
   };
 }
@@ -213,6 +223,7 @@ export function searchHref(query: SearchQuery): string {
   if (query.country) params.set("country", query.country);
   if (query.radiusKm !== DEFAULT_RADIUS_KM) params.set("radius", String(query.radiusKm));
   if (query.remoteOnly) params.set("remote", "1");
+  if (plusRemote(query)) params.set("plusremote", "1");
   if (query.postedWithin !== "any") params.set("posted", query.postedWithin);
   return `/jobs?${params.toString()}`;
 }
@@ -237,7 +248,9 @@ export function latestRole(experience: readonly Role[]): string {
 
 /** The first search on Find jobs (E14-6): that role, in the profile's city and country. */
 export function defaultSearch({ role, city, country }: { role: string; city: string; country: string }): SearchQuery {
-  return { ...EMPTY_QUERY, keywords: role.trim().slice(0, 200), place: city.trim().slice(0, 200), country: countryCodeFor(country) };
+  const place = city.trim().slice(0, 200);
+  // In the city, plus remote postings across the country.
+  return { ...EMPTY_QUERY, keywords: role.trim().slice(0, 200), place, country: countryCodeFor(country), ...(place ? { alsoRemote: true } : {}) };
 }
 
 /** "Today", "Yesterday", "3 days ago", "2 weeks ago", or the date for older postings; "" without a date. */

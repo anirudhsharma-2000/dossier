@@ -1,9 +1,6 @@
 import "server-only";
 
-import { stat, unlink } from "node:fs/promises";
-import path from "node:path";
-
-import { backupsDir, listBackups, writeBackup } from "@/lib/backups";
+import { deleteBackup, listBackups, writeBackup } from "@/lib/backups";
 import { env } from "@/lib/env";
 import { logServerError } from "@/lib/log";
 import { loadSettings, saveSettings } from "@/lib/settings-data";
@@ -11,7 +8,9 @@ import { loadSettings, saveSettings } from "@/lib/settings-data";
 // Nightly backups (E10-7, SET-10): while "Nightly backups" is on, an export
 // is written at 03:00 server time, and backups older than
 // DOSSIER_BACKUP_RETENTION_DAYS are removed. A plain timer in this process,
-// so it's only safe with a single instance of the app (E12-5).
+// so it's only safe with a single instance of the app (E12-5). On Vercel,
+// which keeps no process running, a daily Cron Job runs it instead
+// (src/app/api/cron/daily/route.ts).
 
 const HOUR = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -28,7 +27,7 @@ export function nextRun(now: Date): Date {
 export async function pruneBackups(now: Date, days = env.DOSSIER_BACKUP_RETENTION_DAYS): Promise<number> {
   const cutoff = now.getTime() - days * DAY_MS;
   const old = (await listBackups()).filter((backup) => backup.modified.getTime() < cutoff);
-  await Promise.all(old.map((backup) => unlink(path.join(backupsDir(), backup.name)).catch(() => {})));
+  await Promise.all(old.map((backup) => deleteBackup(backup.name).catch(() => {})));
   return old.length;
 }
 
@@ -53,8 +52,7 @@ export async function runNightlyBackup(now = new Date()): Promise<"written" | "o
 /** When the newest nightly backup was written, if any. */
 export async function lastNightlyBackup(): Promise<Date | null> {
   const [latest] = (await listBackups()).filter((backup) => backup.name.startsWith("dossier-backup-nightly-"));
-  if (!latest) return null;
-  return (await stat(path.join(backupsDir(), latest.name)).catch(() => null))?.mtime ?? null;
+  return latest?.modified ?? null;
 }
 
 const globalForSchedule = globalThis as unknown as { backupTimer?: ReturnType<typeof setTimeout> };

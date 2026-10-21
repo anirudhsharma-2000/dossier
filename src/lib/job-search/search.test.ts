@@ -113,6 +113,8 @@ describe("postings", () => {
       keywords: "Product Designer",
       place: "Hamburg",
       country: "de",
+      // In the city, plus remote postings across the country.
+      alsoRemote: true,
     });
     expect(defaultSearch({ role: "", city: "", country: "" })).toEqual(EMPTY_QUERY);
   });

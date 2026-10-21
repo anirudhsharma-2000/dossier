@@ -14,7 +14,7 @@ import { route } from "@/lib/route";
  * A route handler rather than a Server Action, whose body limit is 1 MB;
  * the proxy still caps bodies at 10 MB (see DEVELOPMENT.md). `?preview=1` only reads
  * the file and says what it would replace. Otherwise the current data is
- * backed up to DOSSIER_DATA_DIR/backups first, then replaced in one go.
+ * backed up first (kept in the database), then replaced in one go.
  */
 export const POST = route(async (request) => {
   // Past the proxy's limit a body arrives cut off, so refuse it up front.

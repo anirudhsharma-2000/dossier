@@ -1,18 +1,17 @@
 import "server-only";
 
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
-
 import { buildExport } from "@/lib/data-export";
-import { env } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import { listStoredFiles, removeStoredFile, removeStoredFiles, storeFile } from "@/lib/stored-files";
 
-// Backups (E10-6, E10-7): exports written to DOSSIER_DATA_DIR/backups. They
-// never hold the API key in plain text.
+// Backups (E10-6, E10-7): exports kept in the database's StoredFile table
+// (they used to go to DOSSIER_DATA_DIR/backups). They never hold the API key
+// in plain text.
 
 export type BackupReason = "before-import" | "nightly";
 
-export const backupsDir = () => path.join(env.DOSSIER_DATA_DIR, "backups");
+/** Where backups are kept, in words for Settings. */
+export const BACKUPS_WHERE = "the database";
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -23,23 +22,26 @@ export function backupFileName(reason: BackupReason, now: Date): string {
   return `dossier-backup-${reason}-${day}-${time}.json`;
 }
 
-/** Writes an export of everything to the backups folder; returns the file's name. */
+/** Keeps an export of everything as a backup; returns the file's name. */
 export async function writeBackup(reason: BackupReason, now = new Date()): Promise<string> {
   const data = await buildExport(prisma, { now });
-  await mkdir(backupsDir(), { recursive: true });
   const name = backupFileName(reason, now);
-  await writeFile(path.join(backupsDir(), name), JSON.stringify(data, null, 2));
+  await storeFile("backup", name, Buffer.from(JSON.stringify(data, null, 2)), { contentType: "application/json", createdAt: now });
   return name;
 }
 
-/** The backup files, newest first. */
+/** The backups, newest first. */
 export async function listBackups(): Promise<{ name: string; modified: Date }[]> {
-  const names = (await readdir(backupsDir()).catch(() => [])).filter((name) => /^dossier-backup-.*\.json$/.test(name));
-  const files = await Promise.all(names.map(async (name) => ({ name, modified: (await stat(path.join(backupsDir(), name))).mtime })));
-  return files.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+  const files = await listStoredFiles("backup");
+  return files.filter((file) => /^dossier-backup-.*\.json$/.test(file.name)).map((file) => ({ name: file.name, modified: file.createdAt }));
 }
 
-/** Deletes every backup file (Delete everything, E10-8). */
+/** Deletes one backup. */
+export async function deleteBackup(name: string): Promise<void> {
+  await removeStoredFile("backup", name);
+}
+
+/** Deletes every backup (Delete everything, E10-8). */
 export async function deleteAllBackups(): Promise<void> {
-  await rm(backupsDir(), { recursive: true, force: true });
+  await removeStoredFiles("backup");
 }

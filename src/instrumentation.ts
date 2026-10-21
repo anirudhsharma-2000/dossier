@@ -10,21 +10,26 @@ export async function register() {
     const { logServerError } = await import("@/lib/log");
     await recoverInterruptedJobs().catch((error: unknown) => logServerError("startup", error));
 
-    // Finished jobs, with what they were given and wrote, are deleted after a while.
-    const { startJobSweep } = await import("@/lib/jobs/retention");
-    startJobSweep();
+    // On Vercel no process stays up for timers: a daily Cron Job and signed-in
+    // page views run the same work instead (src/lib/schedules.ts).
+    const { isServerless } = await import("@/lib/serverless");
+    if (!isServerless()) {
+      // Finished jobs, with what they were given and wrote, are deleted after a while.
+      const { startJobSweep } = await import("@/lib/jobs/retention");
+      startJobSweep();
 
-    // Nightly backups at 03:00, while they're switched on (E10-7).
-    const { startBackupSchedule } = await import("@/lib/backup-schedule");
-    startBackupSchedule();
+      // Nightly backups at 03:00, while they're switched on (E10-7).
+      const { startBackupSchedule } = await import("@/lib/backup-schedule");
+      startBackupSchedule();
 
-    // The inbox check, while a Google account is connected (E15-3).
-    const { startInboxSchedule } = await import("@/lib/google/sync");
-    startInboxSchedule();
+      // The inbox check, while a Google account is connected (E15-3).
+      const { startInboxSchedule } = await import("@/lib/google/sync");
+      startInboxSchedule();
 
-    // The job agent's daily run, while it's on (E16-4).
-    const { startAgentSchedule } = await import("@/lib/agent/schedule");
-    startAgentSchedule();
+      // The job agent's daily run, while it's on (E16-4).
+      const { startAgentSchedule } = await import("@/lib/agent/schedule");
+      startAgentSchedule();
+    }
 
     // DOSSIER_TELEMETRY, when set, is the usage ping's answer on record (#172).
     // Then the log says what the ping sends while it's on, or how to answer
@@ -40,3 +45,4 @@ export async function register() {
     }
   }
 }
+

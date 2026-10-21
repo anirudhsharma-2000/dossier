@@ -15,6 +15,9 @@ import { PRINT_TOKEN_HEADER, verifyPrintToken } from "@/lib/pdf/print-token";
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   if (pathname === "/login") return pass(request);
+  // The daily Cron Job and the Claude connector bring their own credentials,
+  // which their routes check: a secret, and an OAuth token.
+  if (/^\/api\/(cron|mcp|oauth)(\/|$)/.test(pathname) || pathname.startsWith("/.well-known/")) return NextResponse.next();
 
   const session = await decodeSession(
     request.cookies.get(SESSION_COOKIE)?.value,

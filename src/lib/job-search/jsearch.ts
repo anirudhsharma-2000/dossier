@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import type { JobSourceAdapter, JSearchHost, RequestContext, SourceCredentials } from "./adapter";
 import { countryName } from "./countries";
-import { jobSearchError } from "./errors";
+import { JobSearchError, jobSearchError } from "./errors";
 import { requestJson } from "./http";
 import { safeLink, type FoundPosting, type PostedWithin, type SearchPage, type SearchQuery } from "./search";
 
@@ -65,9 +65,43 @@ const jobSchema = z.object({
 });
 type Job = z.output<typeof jobSchema>;
 
-const responseSchema = z.object({
-  data: z.union([z.array(z.unknown()), z.object({ jobs: z.array(z.unknown()), cursor: z.string().nullish() })]),
-});
+/** JSearch can take well over ten seconds, especially outside the US. */
+const JSEARCH_TIMEOUT_MS = 45_000;
+
+const cursorSchema = z.string().nullish().catch(null).transform((cursor) => cursor ?? null);
+const listSchema = z.array(z.unknown());
+
+/**
+ * The jobs in an answer and where the next page starts. Both hosts have
+ * answered in more than one shape over time: the jobs as `data`, as
+ * `data.jobs` or `data.data`, or as `jobs`, with the cursor next to them.
+ * Null when the answer holds no list of jobs at all.
+ */
+export function jobsOf(answer: unknown): { raw: unknown[]; cursor: string | null; paged: "cursor" | "page" } | null {
+  if (!answer || typeof answer !== "object") return null;
+  const body = answer as Record<string, unknown>;
+  const data = body.data;
+  if (listSchema.safeParse(data).success) {
+    const cursor = cursorSchema.parse(body.cursor);
+    return { raw: data as unknown[], cursor, paged: cursor ? "cursor" : "page" };
+  }
+  if (data && typeof data === "object") {
+    const nested = data as Record<string, unknown>;
+    const list = listSchema.safeParse(nested.jobs).success ? nested.jobs : listSchema.safeParse(nested.data).success ? nested.data : null;
+    if (list) return { raw: list as unknown[], cursor: cursorSchema.parse(nested.cursor ?? body.cursor), paged: "cursor" };
+  }
+  if (listSchema.safeParse(body.jobs).success) return { raw: body.jobs as unknown[], cursor: cursorSchema.parse(body.cursor), paged: "cursor" };
+  return null;
+}
+
+/** For the log: the shape of an answer Dossier couldn't read, never its content. */
+function shapeOf(answer: unknown): string {
+  if (!answer || typeof answer !== "object") return typeof answer;
+  const body = answer as Record<string, unknown>;
+  const keys = Object.keys(body).slice(0, 12).join(", ");
+  const said = typeof body.message === "string" ? body.message : (body.error as { message?: unknown } | undefined)?.message;
+  return `keys: ${keys}${typeof said === "string" ? `; message: ${said.slice(0, 160)}` : ""}`;
+}
 
 const PERIODS: Record<string, string> = { YEAR: "a year", MONTH: "a month", WEEK: "a week", DAY: "a day", HOUR: "an hour" };
 
@@ -129,8 +163,8 @@ function queryText({ keywords, place }: SearchQuery): string {
   return place ? `${keywords} in ${place}` : keywords;
 }
 
-function searchUrl(query: SearchQuery, host: JSearchHost, next: string | null, baseUrl?: string): URL {
-  const { base, path } = HOSTS[host];
+function searchUrl(query: SearchQuery, host: JSearchHost, next: string | null, baseUrl?: string, path = HOSTS[host].path): URL {
+  const { base } = HOSTS[host];
   const url = new URL(`${baseUrl ?? base}${path}`);
   url.searchParams.set("query", queryText(query));
   // Without a country, JSearch searches the US.
@@ -138,9 +172,9 @@ function searchUrl(query: SearchQuery, host: JSearchHost, next: string | null, b
   url.searchParams.set("date_posted", DATE_POSTED[query.postedWithin]);
   if (query.place) url.searchParams.set("radius", String(query.radiusKm));
   if (query.remoteOnly) url.searchParams.set("work_from_home", "true");
-  if (host === "openwebninja") {
-    if (next?.startsWith("cursor:")) url.searchParams.set("cursor", next.slice("cursor:".length));
-  } else {
+  if (next?.startsWith("cursor:")) {
+    url.searchParams.set("cursor", next.slice("cursor:".length));
+  } else if (path === "/search") {
     url.searchParams.set("page", next?.startsWith("page:") ? next.slice("page:".length) : "1");
     url.searchParams.set("num_pages", "1");
   }
@@ -153,12 +187,27 @@ async function searchPage(
   next: string | null,
   context: RequestContext = {},
 ): Promise<SearchPage> {
-  const url = searchUrl(query, host, next, context.baseUrl);
-  const answer = responseSchema.safeParse(await requestJson("JSEARCH", url, { headers: HOSTS[host].headers(key), signal: context.signal }));
-  if (!answer.success) throw jobSearchError("changed", "JSEARCH", { detail: `${url.pathname}: unexpected answer` });
+  const ask = (url: URL) => requestJson("JSEARCH", url, { headers: HOSTS[host].headers(key), signal: context.signal, timeoutMs: JSEARCH_TIMEOUT_MS });
+  let url = searchUrl(query, host, next, context.baseUrl, next?.startsWith("cursor:") ? "/search-v2" : HOSTS[host].path);
+  let answer: unknown;
+  try {
+    answer = await ask(url);
+  } catch (error) {
+    // RapidAPI's listing may only offer the newer search-v2 now: try that once.
+    if (!(host === "rapidapi" && url.pathname.endsWith("/search") && error instanceof JobSearchError && error.problem === "changed")) throw error;
+    url = searchUrl(query, host, next, context.baseUrl, "/search-v2");
+    answer = await ask(url);
+  }
+  const found = jobsOf(answer);
+  if (!found) {
+    // An error answered with 200: a used-up plan says so in words.
+    const shape = shapeOf(answer);
+    if (/quota|limit|exceeded|upgrade/i.test(shape)) throw jobSearchError("quota", "JSEARCH", { detail: `${url.pathname}: ${shape}` });
+    if (/subscri|api key|unauthori|forbidden/i.test(shape)) throw jobSearchError("key", "JSEARCH", { detail: `${url.pathname}: ${shape}` });
+    throw jobSearchError("changed", "JSEARCH", { detail: `${url.pathname}: unexpected answer (${shape})` });
+  }
 
-  const { data } = answer.data;
-  const raw = Array.isArray(data) ? data : data.jobs;
+  const { raw } = found;
   const seen = new Set<string>();
   const postings: FoundPosting[] = [];
   for (const item of raw) {
@@ -169,11 +218,9 @@ async function searchPage(
   }
 
   const page = Number(url.searchParams.get("page") ?? "1");
-  const nextToken = !Array.isArray(data)
-    ? data.cursor
-      ? `cursor:${data.cursor}`
-      : null
-    : raw.length >= PAGE_SIZE
+  const nextToken = found.cursor
+    ? `cursor:${found.cursor}`
+    : found.paged === "page" && host === "rapidapi" && raw.length >= PAGE_SIZE
       ? `page:${page + 1}`
       : null;
   return { postings, next: nextToken };

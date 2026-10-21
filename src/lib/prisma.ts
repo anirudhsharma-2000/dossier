@@ -1,19 +1,29 @@
 import "server-only";
 
 import { PrismaPg } from "@prisma/adapter-pg";
+import { attachDatabasePool } from "@vercel/functions";
+import { Pool } from "pg";
 
 import { PrismaClient } from "@/generated/prisma/client";
 import { env } from "@/lib/env";
+import { isServerless } from "@/lib/serverless";
 
 // Reuse one client across hot reloads in development instead of opening a new
 // connection pool on every change.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 function client(): PrismaClient {
-  globalForPrisma.prisma ??= new PrismaClient({
-    adapter: new PrismaPg({ connectionString: env.DATABASE_URL }),
-  });
+  globalForPrisma.prisma ??= new PrismaClient({ adapter: adapter() });
   return globalForPrisma.prisma;
+}
+
+function adapter(): PrismaPg {
+  if (!isServerless()) return new PrismaPg({ connectionString: env.DATABASE_URL });
+  // On Vercel: a few connections per instance (DATABASE_URL should be the
+  // pooled one, e.g. Neon's), released before an idle instance is paused.
+  const pool = new Pool({ connectionString: env.DATABASE_URL, max: 5, idleTimeoutMillis: 5_000 });
+  attachDatabasePool(pool);
+  return new PrismaPg(pool);
 }
 
 /**

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "vercel-build": "prisma generate && prisma migrate deploy && tsx prisma/seed.ts && next build",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
@@ -20,8 +21,11 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
+    "@sparticuz/chromium": "^153.0.0",
+    "@vercel/functions": "^3.0.0",
     "fflate": "^0.8.3",
     "jose": "^6.2.12",
     "lucide-react": "^1.59.0",
@@ -30,6 +34,7 @@
     "node-html-parser": "^9.0.4",
     "ollama": "^0.6.3",
     "openai": "^7.23.0",
+    "pg": "^8.16.3",
     "playwright-core": "^1.63.0",
     "radix-ui": "^1.6.7",
     "react": "19.3.0",
@@ -57,7 +62,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
     "jsdom": "^30.1.1",
-    "pg": "^8.16.3",
     "prisma": "^7.10.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
@@ -68,5 +72,8 @@
   "packageManager": "yarn@4.18.1+sha512.b2e1e7524f654f2749d32b4ebcb4622473cb5bcbc485df2007e12a154e50162a4d795526768bc5f5b8f81717bfd79deb2472813d86fb5ae2eb551fa9c872b08f",
   "resolutions": {
     "mysql2@npm:3.15.3": "3.24.4"
+  },
+  "engines": {
+    "node": "24.x"
   }
 }

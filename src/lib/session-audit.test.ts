@@ -15,6 +15,16 @@ const OPEN_ROUTES = new Set([
   // Google's redirect comes from Google's site, so route()'s same-origin check
   // would refuse it; it checks the session and its signed state itself (E15-1).
   "src/app/api/google/callback/route.ts",
+  // The daily Cron Job on Vercel checks its CRON_SECRET bearer token.
+  "src/app/api/cron/daily/route.ts",
+  // The Claude connector checks its OAuth access token; its sign-in metadata,
+  // registration and token endpoints are open by design (OAuth 2.1, RFC 7591),
+  // and hand out nothing without a code from a signed-in Allow.
+  "src/app/api/mcp/route.ts",
+  "src/app/api/oauth/metadata/route.ts",
+  "src/app/api/oauth/protected-resource/route.ts",
+  "src/app/api/oauth/register/route.ts",
+  "src/app/api/oauth/token/route.ts",
 ]);
 
 const sources = globSync("src/**/*.{ts,tsx}").filter((file) => !/\.test\.tsx?$/.test(file) && !file.startsWith("src/generated/"));
@@ -63,6 +73,11 @@ describe("session checks (E11-5)", () => {
     const source = read("src/app/api/google/callback/route.ts");
     expect(source).toContain("await getSession()");
     expect(source).toContain("await verifyState(");
+  });
+
+  it("checks the cron secret and the connector's access token in those routes", () => {
+    expect(read("src/app/api/cron/daily/route.ts")).toContain("authorized(request)");
+    expect(read("src/app/api/mcp/route.ts")).toContain("await verifyAccessToken(");
   });
 
   it("defines every route handler with route()", () => {

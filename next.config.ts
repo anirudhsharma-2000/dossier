@@ -2,11 +2,15 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   // The production image runs .next/standalone: the server and only the files
-  // it needs (E12-1).
-  output: "standalone",
+  // it needs (E12-1). Vercel builds its own functions instead.
+  output: process.env.VERCEL ? undefined : "standalone",
   // playwright-core reads some of its own files by computed paths, which the
   // tracing can't follow (browsers.json for one), so all of it goes along.
-  outputFileTracingIncludes: { "/**": ["./node_modules/playwright-core/**/*"] },
+  // On Vercel, so does the packed Chromium that @sparticuz/chromium unpacks.
+  outputFileTracingIncludes: {
+    "/**": ["./node_modules/playwright-core/**/*", ...(process.env.VERCEL ? ["./node_modules/@sparticuz/chromium/**/*"] : [])],
+  },
+  serverExternalPackages: ["@sparticuz/chromium"],
   logging: {
     // In development, Next.js logs every Server Action call with its
     // arguments, which would print the sign-in password (AUTH-1), API keys
@@ -18,6 +22,16 @@ const nextConfig: NextConfig = {
   // an old link's ?date= opens that day there.
   async redirects() {
     return [{ source: "/calendar", destination: "/", permanent: false }];
+  },
+  // The Claude connector's sign-in metadata (src/lib/connector/oauth.ts),
+  // at the addresses OAuth clients look for it.
+  async rewrites() {
+    return [
+      { source: "/.well-known/oauth-authorization-server", destination: "/api/oauth/metadata" },
+      { source: "/.well-known/oauth-authorization-server/:path*", destination: "/api/oauth/metadata" },
+      { source: "/.well-known/oauth-protected-resource", destination: "/api/oauth/protected-resource" },
+      { source: "/.well-known/oauth-protected-resource/:path*", destination: "/api/oauth/protected-resource" },
+    ];
   },
   // On every response (E11-5); the Content-Security-Policy comes from the
   // proxy, since it needs a nonce per request. HSTS is left to the reverse

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { AiError } from "@/lib/ai/errors";
 import { createTestClient, resetDatabase } from "@/test/db";
 
-import { cancelApplicationJobs, cancelJob, defineJob, getJob, recoverInterruptedJobs, retryJob, startJob, subscribeJob } from "./runner";
+import { cancelApplicationJobs, cancelJob, defineJob, failStaleJobs, getJob, JOB_MESSAGES, recoverInterruptedJobs, retryJob, startJob, subscribeJob } from "./runner";
 
 const db = vi.hoisted(() => ({ client: undefined as ReturnType<typeof createTestClient> | undefined }));
 vi.mock("@/lib/prisma", async () => {
@@ -178,5 +178,53 @@ describe("the job runner", () => {
     });
     expect(await recoverInterruptedJobs()).toBe(2);
     expect(await prisma().job.count({ where: { status: "FAILED", error: "Dossier restarted before this finished. Try again." } })).toBe(2);
+  });
+});
+
+describe("the job runner on Vercel", () => {
+  beforeEach(() => {
+    process.env.DOSSIER_SERVERLESS = "1";
+    return () => {
+      delete process.env.DOSSIER_SERVERLESS;
+    };
+  });
+
+  it("runs every job at once in the function that started it, without a queue", async () => {
+    const first = await startJob(gated, { name: "One", fail: "no" });
+    const second = await startJob(gated, { name: "Two", fail: "no" });
+    // A local model would allow one at a time on a long-lived server.
+    await eventually(async () => {
+      expect((await getJob(first))?.status).toBe("RUNNING");
+      expect((await getJob(second))?.status).toBe("RUNNING");
+    });
+    await release("One");
+    await release("Two");
+    await eventually(async () => (await status(second)).toBe("DONE"));
+  });
+
+  it("stops a job cancelled from another instance at its next step, and keeps it cancelled", async () => {
+    const id = await startJob(gated, { name: "Elsewhere", fail: "no" });
+    await eventually(async () => (await status(id)).toBe("RUNNING"));
+    // Another instance only has the row to go by.
+    await prisma().job.update({ where: { id }, data: { status: "FAILED", error: JOB_MESSAGES.cancelled, finishedAt: new Date() } });
+    await release("Elsewhere");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(await getJob(id)).toMatchObject({ status: "FAILED", error: "Cancelled." });
+  });
+
+  it("marks only jobs whose function ran out of time as stopped", async () => {
+    const long = new Date(Date.now() - 10 * 60_000);
+    await prisma().job.createMany({
+      data: [
+        { id: "old-running", type: "test-gated", status: "RUNNING", input: {}, startedAt: long },
+        { id: "old-queued", type: "test-gated", status: "QUEUED", input: {}, createdAt: long },
+        { id: "fresh", type: "test-gated", status: "RUNNING", input: {}, startedAt: new Date() },
+      ],
+    });
+    // A new instance starting doesn't touch the job another one is running.
+    expect(await recoverInterruptedJobs()).toBe(2);
+    expect(await getJob("fresh")).toMatchObject({ status: "RUNNING" });
+    expect(await getJob("old-running")).toMatchObject({ status: "FAILED", error: JOB_MESSAGES.timedOut });
+    expect(await failStaleJobs()).toBe(0);
   });
 });

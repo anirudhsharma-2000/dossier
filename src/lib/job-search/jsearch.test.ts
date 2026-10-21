@@ -151,7 +151,7 @@ describe("JSearch search", () => {
     stubFetch(() => json({ data: { results: [] } }));
     const error = await jsearch.search(query, ninja, null).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(JobSearchError);
-    expect(error).toMatchObject({ problem: "changed", detail: "JSEARCH: /jsearch/search-v2: unexpected answer" });
+    expect(error).toMatchObject({ problem: "changed", detail: "JSEARCH: /jsearch/search-v2: unexpected answer (keys: data)" });
   });
 
   it("says the source isn't answering when it can't be reached", async () => {
@@ -178,5 +178,58 @@ describe("JSearch details and test", () => {
     await jsearch.test(ninja);
     expect(requests).toHaveLength(1);
     expect(requests[0].url.searchParams.get("query")).toBe("developer");
+  });
+});
+
+describe("JSearch answers in other shapes (Bangalore fix)", () => {
+  it("reads jobs nested as data.data or at the top level, with a cursor", async () => {
+    const jobs = jsearchV1Page.data.slice(0, 3);
+    stubFetch(() => json({ status: "OK", data: { data: jobs, cursor: "c2" } }));
+    const nested = await jsearch.search(query, ninja, null);
+    expect(nested.postings).toHaveLength(3);
+    expect(nested.next).toBe("cursor:c2");
+
+    stubFetch(() => json({ jobs, cursor: null }));
+    const top = await jsearch.search(query, ninja, null);
+    expect(top.postings).toHaveLength(3);
+    expect(top.next).toBeNull();
+  });
+
+  it("goes on with a cursor on RapidAPI too, through search-v2", async () => {
+    const requests = stubFetch(() => json({ status: "OK", data: jsearchV1Page.data.slice(0, 2) }));
+    await jsearch.search(query, rapid, "cursor:abc");
+    expect(requests[0].url.pathname).toBe("/search-v2");
+    expect(requests[0].url.searchParams.get("cursor")).toBe("abc");
+    expect(requests[0].url.searchParams.has("page")).toBe(false);
+  });
+
+  it("tries search-v2 once when RapidAPI's search answers with an error", async () => {
+    const requests = stubFetch(({ url }) =>
+      url.pathname === "/search" ? json({ message: "Endpoint '/search' does not exist" }, { status: 404 }) : json({ status: "OK", data: { jobs: jsearchV1Page.data, cursor: "n1" } }),
+    );
+    const page = await jsearch.search(query, rapid, null);
+    expect(requests.map((request) => request.url.pathname)).toEqual(["/search", "/search-v2"]);
+    expect(page.postings).toHaveLength(10);
+    expect(page.next).toBe("cursor:n1");
+  });
+
+  it("logs the API's own reason when RapidAPI refuses a search", async () => {
+    stubFetch(() => json({ message: "Invalid country" }, { status: 400 }));
+    const error = await jsearch.search({ ...query, country: "in" }, rapid, null).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ problem: "changed" });
+    expect((error as JobSearchError).detail).toContain("(Invalid country)");
+  });
+
+  it("says the plan is used up when a 200 answer says so instead of listing jobs", async () => {
+    stubFetch(() => json({ status: "ERROR", error: { message: "You have exceeded the monthly quota" } }));
+    await expect(jsearch.search(query, ninja, null)).rejects.toMatchObject({ problem: "quota" });
+  });
+
+  it("waits longer than other sources before giving up", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    stubFetch(() => json(jsearchV2LastPage));
+    await jsearch.search(query, ninja, null);
+    expect(timeout).toHaveBeenCalledWith(45_000);
+    timeout.mockRestore();
   });
 });

@@ -1,24 +1,19 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 import { zipSync, type Zippable } from "fflate";
 import { z } from "zod";
 
 import { DocumentKind } from "@/generated/prisma/enums";
-import { env } from "@/lib/env";
 import { resolveFileName } from "@/lib/file-name";
 import { renderPdf } from "@/lib/pdf/render";
 import { prisma } from "@/lib/prisma";
 import { loadProfileName } from "@/lib/profile-data";
 import { loadSettings } from "@/lib/settings-data";
+import { removeStoredFiles, storeFile } from "@/lib/stored-files";
 
 import { defineJob } from "./runner";
-
-/** Where finished zips wait to be downloaded, in DOSSIER_DATA_DIR. */
-export const downloadsDir = () => path.join(env.DOSSIER_DATA_DIR, "downloads");
 
 /** Zips nobody downloaded are removed after this long. */
 const KEEP_MS = 60 * 60 * 1000;
@@ -43,20 +38,12 @@ function unique(name: string, taken: Set<string>): string {
 
 /** Removes zips nobody downloaded in time; the job sweep calls it too. */
 export async function removeOldZips(now: number): Promise<void> {
-  const dir = downloadsDir();
-  const names = await readdir(dir).catch(() => []);
-  await Promise.all(
-    names.map(async (name) => {
-      const file = path.join(dir, name);
-      const { mtimeMs } = await stat(file).catch(() => ({ mtimeMs: now }));
-      if (now - mtimeMs > KEEP_MS) await unlink(file).catch(() => {});
-    }),
-  );
+  await removeStoredFiles("download", new Date(now - KEEP_MS));
 }
 
 /** Removes every zip waiting to be downloaded (Delete everything, E10-8). */
 export async function deleteAllDownloads(): Promise<void> {
-  await rm(downloadsDir(), { recursive: true, force: true });
+  await removeStoredFiles("download");
 }
 
 /** The documents that are printed: an application's email isn't. */
@@ -70,14 +57,14 @@ export async function countTailoredDocuments(): Promise<number> {
 /**
  * "Download all PDFs" (E10-5, SET-10): renders every application's resume
  * and cover letter, named with the file-name pattern, into one folder per
- * company, and zips them into DOSSIER_DATA_DIR/downloads. The PDF service's
+ * company, and keeps the zip in the database until it's downloaded. The PDF service's
  * cap keeps it to two renders at a time.
  */
 export const zipPdfsJob = defineJob({
   type: "zip-pdfs",
   input: z.object({}),
   result: z.object({
-    /** The zip's name in the downloads folder, not a path. */
+    /** The zip's name among the stored downloads, not a path. */
     file: z.string().regex(/^[\w-]+\.zip$/),
     fileName: z.string(),
     documents: z.number().int(),
@@ -122,9 +109,8 @@ export const zipPdfsJob = defineJob({
       // PDFs are compressed already: store them as they are.
       files[`${folder}/${fileName}`] = [pdf, { level: 0 }];
     }
-    await mkdir(downloadsDir(), { recursive: true });
     const file = `${randomUUID()}.zip`;
-    await writeFile(path.join(downloadsDir(), file), zipSync(files));
+    await storeFile("download", file, zipSync(files), { contentType: "application/zip", expiresAt: new Date(now.getTime() + KEEP_MS), createdAt: now });
     return { file, fileName: zipFileName(now), documents: documents.length };
   },
 });

@@ -4,8 +4,10 @@
 
 <h1 align="center">Dossier</h1>
 
+> **This fork** runs free on Vercel with a Neon database, adds a Claude connector (use Dossier from Claude chat), fixes JSearch searches outside the US, and can search a city plus remote jobs (Bangalore + remote by default). See **[VERCEL.md](VERCEL.md)** to deploy it.
+
 <p align="center">
-  Your job search, on your own server: one profile, a tailored resume and cover letter for every job, and every application tracked from draft to offer.
+Your job search, on your own server: one profile, a tailored resume and cover letter for every job, and every application tracked from draft to offer.
 </p>
 
 <p align="center">

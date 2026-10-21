@@ -788,3 +788,25 @@ model Job {
   @@index([status])
   @@index([applicationId])
 }
+
+// ─── Stored files ────────────────────────────────────────────────────────────
+
+/// Files the server keeps for a while: nightly and before-import backups,
+/// "Download all PDFs" zips and rendered PDFs waiting for their download.
+/// Kept in the database rather than on disk, so Dossier also runs where there
+/// is no lasting disk (Vercel) and on more than one instance.
+model StoredFile {
+  id          String    @id @default(cuid())
+  /// What it is: "backup", "download" (a zip) or "pdf".
+  kind        String
+  /// Its file name, e.g. "dossier-backup-nightly-2026-09-28-030000.json".
+  name        String
+  contentType String
+  data        Bytes
+  /// When it may be removed; null keeps it until something removes it.
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([kind, name])
+  @@index([kind, createdAt])
+}
