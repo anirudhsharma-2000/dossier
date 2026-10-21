@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/env", () => ({ env: { DOSSIER_SECRET: "s".repeat(40), DOSSIER_PASSWORD: "argon2id:m=19456,t=2,p=1:c2FsdA:aGFzaA" } }));
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+const db = vi.hoisted(() => ({ postingSearch: { findUnique: vi.fn() }, postingScore: { upsert: vi.fn() } }));
+vi.mock("@/lib/prisma", () => ({ prisma: db }));
 vi.mock("@/lib/profile-data", () => ({
   loadProfile: async () => ({ basics: { city: "Bangalore", country: "India" }, skills: [], languages: [], experience: [], projects: [], education: [], references: [] }),
 }));
@@ -69,6 +70,7 @@ describe("the Claude connector at /api/mcp", () => {
       "list_applications",
       "more_jobs",
       "save_application",
+      "save_job_scores",
       "search_jobs",
       "set_application_status",
     ]);
@@ -89,5 +91,20 @@ describe("the Claude connector at /api/mcp", () => {
     const { result } = (await response.json()) as { result: { content: { text: string }[]; isError?: boolean } };
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("save_application");
+  });
+
+  it("saves the fit scores Claude gives postings, so Find jobs shows them", async () => {
+    const token = await accessToken();
+    const posting = { source: "JSEARCH", externalId: "j1", title: "Android Developer", company: "Acme", place: "Bangalore", remote: null, salary: "", postedAt: null, url: "", via: "", description: "Kotlin", complete: true };
+    db.postingSearch.findUnique.mockResolvedValue({ postings: [posting] });
+    const response = await call(
+      { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "save_job_scores", arguments: { search_id: "s1", scores: [{ number: 1, score: 78, reasons: ["Kotlin in the Acme role"] }, { number: 9, score: 10, reasons: ["?"] }] } } },
+      token,
+    );
+    const { result } = (await response.json()) as { result: { content: { text: string }[] } };
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ saved: [{ number: 1, score: 78, band: "Good fit" }], not_found: [9] });
+    expect(db.postingScore.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ externalId: "j1", score: 78, reasons: ["Kotlin in the Acme role"], redFlags: [], scoredWith: "claude-chat" }) }),
+    );
   });
 });

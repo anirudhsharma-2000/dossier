@@ -56,7 +56,7 @@ Use that production address (or your own domain), not the long address of a sing
 2. Name it **Dossier**, and give the address `https://<project-name>.vercel.app/api/mcp`.
 3. Press **Connect**. Dossier opens; sign in if it asks, then press **Allow**.
 
-Then ask Claude things like "find Android developer jobs in Bangalore or remote", "write an application for number 3" or "what's the status of my applications?". Claude can search, read your profile and postings, write the tailored resume and cover letter itself and save them in Dossier as a Draft (so Dossier needs no AI key of its own), and change an application's status. With "Never invent experience" on, Dossier marks names and numbers Claude wrote that your profile doesn't back. It can't send anything: drafts wait in Dossier for you. Changing `DOSSIER_PASSWORD` disconnects Claude, as it signs out every browser.
+Then ask Claude things like "find Android developer jobs in Bangalore or remote", "score these against my profile", "write an application for number 3" or "what's the status of my applications?". Claude can search, read your profile and postings, score how well postings fit you (shown in Find jobs), write the tailored resume and cover letter itself and save them in Dossier as a Draft (so Dossier needs no AI key of its own), and change an application's status. With "Never invent experience" on, Dossier marks names and numbers Claude wrote that your profile doesn't back. It can't send anything: drafts wait in Dossier for you. Changing `DOSSIER_PASSWORD` disconnects Claude, as it signs out every browser.
 
 ## How it differs from a server of your own
 

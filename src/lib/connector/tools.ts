@@ -7,9 +7,11 @@ import { ApplicationStatus, DocumentKind } from "@/generated/prisma/enums";
 import { approveCandidate } from "@/lib/agent/draft";
 import { loadAiConfig } from "@/lib/ai/config";
 import { providerOption } from "@/lib/ai/provider-options";
+import { scoreFrom } from "@/lib/ai/tasks/score-posting";
 import { unitsSchema } from "@/lib/application-data";
 import { connectorDraftJob } from "@/lib/connector/draft";
-import { saveWrittenApplication, writtenDetailsSchema, writtenLetterSchema, writtenMatchSchema, writtenResumeSchema } from "@/lib/connector/write";
+import { saveWrittenApplication, WRITTEN_IN_CLAUDE, writtenDetailsSchema, writtenLetterSchema, writtenMatchSchema, writtenResumeSchema } from "@/lib/connector/write";
+import { fitBand } from "@/lib/fit";
 import { countryCodeFor, countryName } from "@/lib/job-search/countries";
 import { fullText } from "@/lib/job-search/find";
 import { foundPostingSchema, POSTED_WITHIN, postingText, type FoundPosting, type PostedWithin, type SearchQuery, type ShownPosting } from "@/lib/job-search/search";
@@ -17,6 +19,7 @@ import { getJob, startJob } from "@/lib/jobs/runner";
 import { fetchPosting } from "@/lib/posting-fetch";
 import { loadSearch, runSearch, showMoreFor } from "@/lib/posting-searches";
 import { storePosting } from "@/lib/postings";
+import { saveScore } from "@/lib/posting-scores";
 import { prisma } from "@/lib/prisma";
 import { loadProfile } from "@/lib/profile-data";
 import { isServerless } from "@/lib/serverless";
@@ -121,7 +124,8 @@ export function createDossierServer(origin: string): McpServer {
     {
       instructions:
         "Dossier is the user's own job search app: one profile, tailored resumes and cover letters, and every application tracked. " +
-        "Search jobs with search_jobs (the user looks in Bangalore plus remote jobs in India unless they say otherwise). " +
+        "Search jobs with search_jobs (the user looks in Bangalore plus remote jobs in India unless they say otherwise), " +
+        "and when the user wants to know which fit best, score them against the profile and save the scores with save_job_scores. " +
         "To draft an application, you write it yourself: call get_profile and get_posting, write a tailored resume and cover letter " +
         "from facts in the profile only (never invent experience, employers, numbers or degrees; say what's missing instead), " +
         "show the user a short summary, then save it with save_application. Read or update applications with the other tools. " +
@@ -232,6 +236,50 @@ export function createDossierServer(origin: string): McpServer {
   );
 
   server.registerTool(
+    "save_job_scores",
+    {
+      title: "Save fit scores for postings",
+      description:
+        "Saves how well postings from a search_jobs search fit the user, so Find jobs shows each score with its reasons. " +
+        "Read the profile first, and the whole posting with get_posting when the snippet is too short to judge. " +
+        "Score each from 0 to 100 against the profile from get_profile: 85-100 excellent (clearly meets the core requirements), 70-84 good (most core requirements, a gap or two), 50-69 possible (meaningful gaps or a stretch), 0-49 poor. Judge skills and experience, seniority and scope, location, remote work and language, and salary when both say something. Give one to four short reasons, each tying a requirement to a specific role, project, skill or degree, and up to three real red flags. Never invent experience, and never use age, gender, nationality or any other protected characteristic.",
+      inputSchema: {
+        search_id: z.string().min(1),
+        scores: z
+          .array(
+            z.object({
+              number: z.number().int().min(1).describe("The posting's number in the search"),
+              score: z.number().int().min(0).max(100),
+              reasons: z.array(z.string().max(300)).min(1).max(4),
+              red_flags: z.array(z.string().max(300)).max(3).default([]),
+            }),
+          )
+          .min(1)
+          .max(50),
+      },
+      annotations: { readOnlyHint: false, idempotentHint: true },
+    },
+    async ({ search_id, scores }) => {
+      const search = await prisma.postingSearch.findUnique({ where: { id: search_id }, select: { postings: true } });
+      if (!search) return failure("That search is no longer kept. Search again.");
+      const kept = foundPostingSchema.array().catch([]).parse(search.postings);
+      const saved: { number: number; title: string; score: number; band: string }[] = [];
+      const missing: number[] = [];
+      for (const entry of scores) {
+        const posting = kept[entry.number - 1];
+        if (!posting) {
+          missing.push(entry.number);
+          continue;
+        }
+        const fit = scoreFrom({ score: entry.score, reasons: entry.reasons, redFlags: entry.red_flags });
+        await saveScore(posting, fit, WRITTEN_IN_CLAUDE);
+        saved.push({ number: entry.number, title: posting.title, score: fit.score, band: fitBand(fit.score) });
+      }
+      return text({ saved, not_found: missing.length > 0 ? missing : undefined, link: linkTo(origin, `/jobs?search=${search_id}`) });
+    },
+  );
+
+  server.registerTool(
     "list_applications",
     {
       title: "List applications",
@@ -331,7 +379,7 @@ export function createDossierServer(origin: string): McpServer {
         details: writtenDetailsSchema,
         resume: writtenResumeSchema,
         cover_letter: writtenLetterSchema,
-        match: writtenMatchSchema.describe("Optional: what the posting asks for and whether the profile covers it, partly covers it, or has a gap"),
+        match: writtenMatchSchema.describe("What the posting asks for and whether the profile covers it, partly covers it, or has a gap; Dossier shows it as the application's match"),
         note: z.string().max(2000).optional().describe("What the user asked to stress, kept with the application"),
       },
       annotations: { readOnlyHint: false, openWorldHint: true },
