@@ -110,7 +110,7 @@ describe("testAiConnection and listAiModels", () => {
     provider.current = new MockProvider({ model: null });
     expect(await testAiConnection({})).toEqual({
       ok: true,
-      data: { connected: false, message: "Choose a model in Settings → AI provider first." },
+      data: { connected: false, message: "Choose a model in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector." },
     });
   });
 });

@@ -467,7 +467,7 @@ describe("test()", () => {
   it("needs a model", async () => {
     expect(await failure(new MockProvider({ model: null }).test())).toMatchObject({
       kind: "config",
-      message: "Choose a model in Settings → AI provider first.",
+      message: "Choose a model in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector.",
     });
   });
 });

@@ -172,7 +172,7 @@ describe("runAgentScan (E16-3)", () => {
     expect(await stop()).toBe("Choose a country for the search in Settings → Job agent first.");
     await saveSettings({ agentQuery: query });
     fake.ai = false;
-    expect(await stop()).toBe("Choose an AI provider in Settings → AI provider first.");
+    expect(await stop()).toBe("Choose an AI provider in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector.");
     fake.ai = true;
     fake.source = null;
     expect(await stop()).toBe("Choose a job source in Settings → Job search first.");

@@ -37,7 +37,7 @@ export class MistralProvider extends OpenAICompatibleProvider {
   }
 
   protected override async chat(call: ChatCall): Promise<ChatAnswer> {
-    if (!this.apiKey) throw AiError.config("Add your Mistral API key in Settings → AI provider first.");
+    if (!this.apiKey) throw AiError.config("Add your Mistral API key in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector.");
     try {
       return await super.chat(call);
     } catch (error) {

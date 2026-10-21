@@ -52,7 +52,7 @@ export const agentQueryReady = (query: SearchQuery) => Boolean(query.keywords.tr
 export async function agentSetupProblem(query: SearchQuery): Promise<string | null> {
   if (!query.keywords.trim()) return "Add what to look for in Settings → Job agent first.";
   if (!query.country) return "Choose a country for the search in Settings → Job agent first.";
-  if (!(await isAiConfigured())) return "Choose an AI provider in Settings → AI provider first.";
+  if (!(await isAiConfigured())) return "Choose an AI provider in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector.";
   const config = await loadJobSearchConfig();
   if (!config.source) return "Choose a job source in Settings → Job search first.";
   try {

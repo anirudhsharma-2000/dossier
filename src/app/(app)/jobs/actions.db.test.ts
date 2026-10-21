@@ -133,6 +133,6 @@ describe("Score (#208)", () => {
 
   it("says when there's no AI provider to score with", async () => {
     ai.ready = false;
-    expect(await startScoringPosting({ posting })).toEqual({ ok: false, error: "Choose an AI provider in Settings → AI provider first." });
+    expect(await startScoringPosting({ posting })).toEqual({ ok: false, error: "Choose an AI provider in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector." });
   });
 });

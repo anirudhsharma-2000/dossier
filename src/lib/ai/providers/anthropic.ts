@@ -42,7 +42,7 @@ export class AnthropicProvider extends BaseProvider {
   }
 
   protected async chat(call: ChatCall): Promise<ChatAnswer> {
-    if (!this.client) throw AiError.config("Add your Anthropic API key in Settings → AI provider first.");
+    if (!this.client) throw AiError.config("Add your Anthropic API key in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector.");
     const effort = call.effort && (await this.effortLevels(this.client, call.model, call.signal)).has(call.effort) ? call.effort : undefined;
     const outputConfig = { ...(call.json ? { format: zodOutputFormat(call.json.schema) } : {}), ...(effort ? { effort } : {}) };
     const message = await this.client.messages.create(

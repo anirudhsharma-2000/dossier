@@ -62,7 +62,7 @@ describe("Run now (E16-4)", () => {
     expect(await runAgentNow({})).toMatchObject({ ok: false, error: "Add what to look for in Settings → Job agent first." });
     await saveSettings({ agentQuery: query });
     setup.ai = false;
-    expect(await runAgentNow({})).toMatchObject({ ok: false, error: "Choose an AI provider in Settings → AI provider first." });
+    expect(await runAgentNow({})).toMatchObject({ ok: false, error: "Choose an AI provider in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector." });
     setup.ai = true;
     setup.source = null;
     expect(await runAgentNow({})).toMatchObject({ ok: false, error: "Choose a job source in Settings → Job search first." });

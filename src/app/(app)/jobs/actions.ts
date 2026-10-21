@@ -67,7 +67,7 @@ export const restorePosting = action(postingRef.extend({ saved: z.boolean() }), 
 
 /** "Score" (#208): how well a posting fits the profile, in the background; a scoring under way is followed, not started again. */
 export const startScoringPosting = action(z.object({ posting: foundPostingSchema }), async ({ posting }) => {
-  if (!(await isAiConfigured())) throw new ActionError("Choose an AI provider in Settings → AI provider first.");
+  if (!(await isAiConfigured())) throw new ActionError("Choose an AI provider in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector.");
   const key = scoreJobKey(posting);
   const [unfinished] = await findUnfinishedJobs(key);
   return { jobId: unfinished?.id ?? (await startJob(scorePostingJob, { posting }, { key })) };
