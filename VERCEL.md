@@ -46,7 +46,7 @@ Use that production address (or your own domain), not the long address of a sing
 
 ## 3. Set Dossier up
 
-- **Settings → AI provider → Anthropic**: your Claude API key (from [platform.claude.com](https://platform.claude.com)), with `claude-sonnet-5-5` or `claude-haiku-5-5`. Local models don't work on Vercel.
+- **Settings → AI provider** (optional): Dossier's own AI features (New application, refining in the chat, scoring postings) need an API key. Without one, have Claude chat write your applications through the connector (step 4). Local models don't work on Vercel.
 - **Settings → Job search → JSearch**: your OpenWeb Ninja or RapidAPI key, with the matching host.
 - **Profile**: set your city to **Bangalore** and your country to **India**. Find jobs then starts with Bangalore plus remote jobs across India; untick **Plus remote jobs** for Bangalore only.
 
@@ -56,7 +56,7 @@ Use that production address (or your own domain), not the long address of a sing
 2. Name it **Dossier**, and give the address `https://<project-name>.vercel.app/api/mcp`.
 3. Press **Connect**. Dossier opens; sign in if it asks, then press **Allow**.
 
-Then ask Claude things like "find Android developer jobs in Bangalore or remote", "draft an application for number 3" or "what's the status of my applications?". Claude can search, read your profile and applications, draft applications and change their status. It can't send anything: drafts wait in Dossier for you. Changing `DOSSIER_PASSWORD` disconnects Claude, as it signs out every browser.
+Then ask Claude things like "find Android developer jobs in Bangalore or remote", "write an application for number 3" or "what's the status of my applications?". Claude can search, read your profile and postings, write the tailored resume and cover letter itself and save them in Dossier as a Draft (so Dossier needs no AI key of its own), and change an application's status. With "Never invent experience" on, Dossier marks names and numbers Claude wrote that your profile doesn't back. It can't send anything: drafts wait in Dossier for you. Changing `DOSSIER_PASSWORD` disconnects Claude, as it signs out every browser.
 
 ## How it differs from a server of your own
 

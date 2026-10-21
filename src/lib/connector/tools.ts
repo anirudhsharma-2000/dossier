@@ -5,8 +5,11 @@ import { z } from "zod";
 
 import { ApplicationStatus, DocumentKind } from "@/generated/prisma/enums";
 import { approveCandidate } from "@/lib/agent/draft";
+import { loadAiConfig } from "@/lib/ai/config";
+import { providerOption } from "@/lib/ai/provider-options";
 import { unitsSchema } from "@/lib/application-data";
 import { connectorDraftJob } from "@/lib/connector/draft";
+import { saveWrittenApplication, writtenDetailsSchema, writtenLetterSchema, writtenMatchSchema, writtenResumeSchema } from "@/lib/connector/write";
 import { countryCodeFor, countryName } from "@/lib/job-search/countries";
 import { fullText } from "@/lib/job-search/find";
 import { foundPostingSchema, POSTED_WITHIN, postingText, type FoundPosting, type PostedWithin, type SearchQuery, type ShownPosting } from "@/lib/job-search/search";
@@ -16,6 +19,7 @@ import { loadSearch, runSearch, showMoreFor } from "@/lib/posting-searches";
 import { storePosting } from "@/lib/postings";
 import { prisma } from "@/lib/prisma";
 import { loadProfile } from "@/lib/profile-data";
+import { isServerless } from "@/lib/serverless";
 import { statusInfo } from "@/lib/status";
 import { applyStatusChange } from "@/lib/status-changes";
 import { appVersion } from "@/lib/version";
@@ -59,6 +63,55 @@ function documentText(units: unknown): string {
   return parsed.data.map((unit) => `## ${unit.label || unit.id}\n${unit.text}`).join("\n\n");
 }
 
+/** Where a posting comes from, in a tool's input. */
+const postingSource = {
+  search_id: z.string().optional().describe("A search from search_jobs"),
+  number: z.number().int().min(1).optional().describe("The posting's number in that search"),
+  posting_url: z.url().optional().describe("The posting's web address"),
+  posting_text: z.string().max(100_000).optional().describe("The posting's text, pasted"),
+};
+
+type PostingSource = { search_id?: string; number?: number; posting_url?: string; posting_text?: string };
+type ResolvedPosting = { text: string; url: string; postingId: string | null; title?: string; company?: string; place?: string };
+
+/** The whole text of a posting from a search, a link or pasted text, or what's wrong. */
+async function resolvePosting(source: PostingSource): Promise<ResolvedPosting | { error: string }> {
+  if (source.search_id) {
+    const search = await prisma.postingSearch.findUnique({ where: { id: source.search_id }, select: { postings: true } });
+    const kept = foundPostingSchema.array().catch([]).parse(search?.postings ?? []);
+    const found = source.number ? kept[source.number - 1] : undefined;
+    if (!found) return { error: "There's no such posting in that search. Use a number from search_jobs." };
+    const description = (await fullText(found)) ?? found.description;
+    if (!description.trim()) return { error: "That posting has no text to write from. Give its link as posting_url instead." };
+    return {
+      text: postingText({ ...found, description }),
+      url: found.url,
+      postingId: (await storePosting(found)).id,
+      title: found.title,
+      company: found.company,
+      place: found.place,
+    };
+  }
+  if (source.posting_url) {
+    const fetched = await fetchPosting(source.posting_url);
+    if (!fetched.ok) return { error: `${fetched.error} Paste the posting's text as posting_text instead.` };
+    return { text: fetched.text, url: fetched.url, postingId: null };
+  }
+  if (source.posting_text?.trim()) return { text: source.posting_text.trim(), url: "", postingId: null };
+  return { error: "Give search_id and number, posting_url, or posting_text." };
+}
+
+/** Whether Dossier has an AI model of its own that it can reach from here. */
+async function dossierAiReady(): Promise<boolean> {
+  try {
+    const config = await loadAiConfig();
+    if (providerOption(config.provider).local) return !isServerless();
+    return Boolean(config.apiKey) && !config.apiKeyProblem;
+  } catch {
+    return false;
+  }
+}
+
 /** The address of a page in Dossier, for links in answers. */
 const linkTo = (origin: string, path: string) => `${origin}${path}`;
 
@@ -68,9 +121,11 @@ export function createDossierServer(origin: string): McpServer {
     {
       instructions:
         "Dossier is the user's own job search app: one profile, tailored resumes and cover letters, and every application tracked. " +
-        "Search jobs with search_jobs (the user looks in Bangalore plus remote jobs in India unless they say otherwise), " +
-        "draft an application with draft_application and follow it with check_draft, and read or update applications. " +
-        "Nothing is ever sent for the user: drafts wait in Dossier for them to review.",
+        "Search jobs with search_jobs (the user looks in Bangalore plus remote jobs in India unless they say otherwise). " +
+        "To draft an application, you write it yourself: call get_profile and get_posting, write a tailored resume and cover letter " +
+        "from facts in the profile only (never invent experience, employers, numbers or degrees; say what's missing instead), " +
+        "show the user a short summary, then save it with save_application. Read or update applications with the other tools. " +
+        "Nothing is ever sent for the user: drafts wait in Dossier for them to review and download as PDFs.",
     },
   );
 
@@ -78,7 +133,8 @@ export function createDossierServer(origin: string): McpServer {
     "get_profile",
     {
       title: "Read the profile",
-      description: "The user's profile in Dossier: headline, summary, skills, languages, experience, projects and education. Contact details are left out.",
+      description:
+        "The user's profile in Dossier: headline, summary, skills, languages, experience, projects and education, with the ids save_application uses. Contact details are left out.",
       annotations: { readOnlyHint: true },
     },
     async () => {
@@ -96,9 +152,9 @@ export function createDossierServer(origin: string): McpServer {
         summary: profile.basics.summary,
         skills: profile.skills.map((skill) => skill.name),
         languages: profile.languages.map((language) => `${language.name} (${language.level})`),
-        experience: profile.experience.map((role) => ({ role: role.role, company: role.company, location: role.location, when: span(role), bullets: role.bullets, skills: role.skillIds.map((id) => skills.get(id)).filter(Boolean) })),
-        projects: profile.projects.map((project) => ({ name: project.name, link: project.link, when: span(project), bullets: project.bullets })),
-        education: profile.education.map((entry) => ({ degree: entry.degree, school: entry.school, when: span(entry), notes: entry.notes })),
+        experience: profile.experience.map((role) => ({ id: role.id, role: role.role, company: role.company, location: role.location, when: span(role), bullets: role.bullets, skills: role.skillIds.map((id) => skills.get(id)).filter(Boolean) })),
+        projects: profile.projects.map((project) => ({ id: project.id, name: project.name, link: project.link, when: span(project), bullets: project.bullets })),
+        education: profile.education.map((entry) => ({ id: entry.id, degree: entry.degree, school: entry.school, when: span(entry), notes: entry.notes })),
         link: linkTo(origin, "/profile"),
       });
     },
@@ -248,49 +304,78 @@ export function createDossierServer(origin: string): McpServer {
   );
 
   server.registerTool(
-    "draft_application",
+    "get_posting",
     {
-      title: "Draft an application",
+      title: "Read a posting",
+      description: "The whole text of a job posting, from a search (search_id and number), a link (posting_url) or pasted text, to write an application from.",
+      inputSchema: { search_id: postingSource.search_id, number: postingSource.number, posting_url: postingSource.posting_url },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (input) => {
+      const posting = await resolvePosting(input);
+      if ("error" in posting) return failure(posting.error);
+      return text({ url: posting.url || undefined, title: posting.title, company: posting.company, place: posting.place, text: posting.text });
+    },
+  );
+
+  server.registerTool(
+    "save_application",
+    {
+      title: "Save an application you wrote",
       description:
-        "Starts drafting a tailored resume and cover letter for a posting, as a Draft application in Dossier. Give exactly one of: " +
-        "search_id and number (a posting from search_jobs), posting_url, or posting_text. It takes one to three minutes: " +
-        "follow it with check_draft. Nothing is sent.",
+        "Saves a tailored resume and cover letter you wrote as a Draft application in Dossier, where the user can review, edit and download them as PDFs. " +
+        "Give the posting (search_id and number, posting_url or posting_text), its details, the resume (by the ids from get_profile) and the letter. " +
+        "Only use facts from the profile. Nothing is sent.",
       inputSchema: {
-        search_id: z.string().optional(),
-        number: z.number().int().min(1).optional().describe("The posting's number in that search"),
-        posting_url: z.url().optional(),
-        posting_text: z.string().max(100_000).optional(),
-        note: z.string().max(2000).optional().describe("Anything the documents should stress, in the user's words"),
+        ...postingSource,
+        details: writtenDetailsSchema,
+        resume: writtenResumeSchema,
+        cover_letter: writtenLetterSchema,
+        match: writtenMatchSchema.describe("Optional: what the posting asks for and whether the profile covers it, partly covers it, or has a gap"),
+        note: z.string().max(2000).optional().describe("What the user asked to stress, kept with the application"),
       },
       annotations: { readOnlyHint: false, openWorldHint: true },
     },
+    async ({ search_id, number, posting_url, posting_text, details, resume, cover_letter, match, note }) => {
+      const posting = await resolvePosting({ search_id, number, posting_url, posting_text });
+      if ("error" in posting) return failure(posting.error);
+      const saved = await saveWrittenApplication({
+        posting: posting.text.slice(0, 100_000),
+        postingUrl: posting.url.slice(0, 2000),
+        postingId: posting.postingId,
+        details,
+        resume,
+        letter: cover_letter,
+        match,
+        note: note ?? "",
+      });
+      return text({
+        application_id: saved.applicationId,
+        status: "Draft",
+        link: linkTo(origin, `/applications/${saved.applicationId}`),
+        check_these: saved.unverified.length > 0 ? saved.unverified : undefined,
+        next: saved.unverified.length > 0 ? "Dossier marked names or numbers it couldn't find in the profile or posting; tell the user to check them." : undefined,
+      });
+    },
+  );
+
+  server.registerTool(
+    "draft_application",
+    {
+      title: "Have Dossier draft an application",
+      description:
+        "Has Dossier's own AI model draft the application, only when an AI provider is set up in Dossier's settings. " +
+        "Without one, write it yourself with get_profile, get_posting and save_application. Takes one to three minutes: follow it with check_draft.",
+      inputSchema: { ...postingSource, note: z.string().max(2000).optional().describe("Anything the documents should stress, in the user's words") },
+      annotations: { readOnlyHint: false, openWorldHint: true },
+    },
     async ({ search_id, number, posting_url, posting_text, note }) => {
-      let posting = "";
-      let postingUrl = "";
-      let postingId: string | null = null;
-
-      if (search_id) {
-        const search = await prisma.postingSearch.findUnique({ where: { id: search_id }, select: { postings: true } });
-        const kept = foundPostingSchema.array().catch([]).parse(search?.postings ?? []);
-        const found = number ? kept[number - 1] : undefined;
-        if (!found) return failure("There's no such posting in that search. Use a number from search_jobs.");
-        const description = (await fullText(found)) ?? found.description;
-        if (!description.trim()) return failure("That posting has no text to write from. Give its link as posting_url instead.");
-        posting = postingText({ ...found, description });
-        postingUrl = found.url;
-        postingId = (await storePosting(found)).id;
-      } else if (posting_url) {
-        const fetched = await fetchPosting(posting_url);
-        if (!fetched.ok) return failure(`${fetched.error} Paste the posting's text as posting_text instead.`);
-        posting = fetched.text;
-        postingUrl = fetched.url;
-      } else if (posting_text?.trim()) {
-        posting = posting_text.trim();
-      } else {
-        return failure("Give search_id and number, posting_url, or posting_text.");
+      if (!(await dossierAiReady())) {
+        return failure("Dossier has no AI model of its own set up. Write the application yourself: get_profile, get_posting, then save_application.");
       }
-
-      const jobId = await startJob(connectorDraftJob, { posting: posting.slice(0, 100_000), postingUrl: postingUrl.slice(0, 2000), note: note ?? "", postingId });
+      const posting = await resolvePosting({ search_id, number, posting_url, posting_text });
+      if ("error" in posting) return failure(posting.error);
+      const jobId = await startJob(connectorDraftJob, { posting: posting.text.slice(0, 100_000), postingUrl: posting.url.slice(0, 2000), note: note ?? "", postingId: posting.postingId });
       return text({ draft_id: jobId, status: "started", next: "Call check_draft with this draft_id in a minute or so." });
     },
   );

@@ -38,7 +38,7 @@ export default async function AuthorizePage({ searchParams }: PageProps<"/oauth/
               <ul className="list-disc pl-5 text-muted">
                 <li>search for jobs with your job source, and see your saved postings</li>
                 <li>read your profile and your applications, with their resumes and cover letters</li>
-                <li>draft new applications and change their status</li>
+                <li>save applications it writes for you as drafts, and change their status</li>
               </ul>
               <p className="text-muted">
                 It will send you back to <strong className="text-ink">{new URL(checked.redirectUri).host}</strong>. It can never send an

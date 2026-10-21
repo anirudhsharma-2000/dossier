@@ -64,9 +64,11 @@ describe("the Claude connector at /api/mcp", () => {
       "check_draft",
       "draft_application",
       "get_application",
+      "get_posting",
       "get_profile",
       "list_applications",
       "more_jobs",
+      "save_application",
       "search_jobs",
       "set_application_status",
     ]);
@@ -79,5 +81,13 @@ describe("the Claude connector at /api/mcp", () => {
     expect(result.isError).toBeFalsy();
     expect(searches.ran.at(-1)).toMatchObject({ keywords: "android developer", place: "Bangalore", country: "in", alsoRemote: true, remoteOnly: false, postedWithin: "month" });
     expect(JSON.parse(result.content[0].text)).toMatchObject({ search_id: "s1", searched: "android developer in Bangalore plus remote" });
+  });
+
+  it("asks Claude to write the application itself when Dossier has no AI model", async () => {
+    const token = await accessToken();
+    const response = await call({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "draft_application", arguments: { posting_text: "Android developer at Acme" } } }, token);
+    const { result } = (await response.json()) as { result: { content: { text: string }[]; isError?: boolean } };
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("save_application");
   });
 });

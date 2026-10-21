@@ -47,7 +47,9 @@ export type ApplicationReading = {
  */
 export type ApplicationClaim =
   | { kind: "manual"; writeJobId: string; readJobId: string; postingId: string | null }
-  | { kind: "agent"; candidateId: string; score: number };
+  | { kind: "agent"; candidateId: string; score: number }
+  /** Written in Claude chat and saved through the connector: one call makes one application. */
+  | { kind: "connector"; postingId: string | null };
 
 export type CreateApplicationInput = {
   reading: ApplicationReading;
@@ -107,7 +109,7 @@ export async function createApplicationFromDocuments({ reading, documents, match
         if (claimed.key?.startsWith(CLAIMED) && claimed.key !== `${CLAIMED}pending`) return { id: claimed.key.slice(CLAIMED.length), isNew: false };
         throw new ActionError("This application is already being created.");
       }
-    } else {
+    } else if (claim.kind === "agent") {
       // The agent claimed the candidate before it wrote anything; only that claim may create its draft.
       const { count } = await tx.agentCandidate.updateMany({
         where: { id: claim.candidateId, status: AgentCandidateStatus.DRAFTING },
@@ -167,8 +169,10 @@ export async function createApplicationFromDocuments({ reading, documents, match
       if (claim.postingId) {
         await tx.posting.updateMany({ where: { id: claim.postingId, applicationId: null }, data: { applicationId: application.id } });
       }
-    } else {
+    } else if (claim.kind === "agent") {
       await tx.agentCandidate.update({ where: { id: claim.candidateId }, data: { applicationId: application.id } });
+    } else if (claim.postingId) {
+      await tx.posting.updateMany({ where: { id: claim.postingId, applicationId: null }, data: { applicationId: application.id } });
     }
     return { id: application.id, isNew: true };
   });
