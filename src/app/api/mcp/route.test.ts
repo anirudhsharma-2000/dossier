@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/env", () => ({ env: { DOSSIER_SECRET: "s".repeat(40), DOSSIER_PASSWORD: "argon2id:m=19456,t=2,p=1:c2FsdA:aGFzaA" } }));
 const db = vi.hoisted(() => ({ postingSearch: { findUnique: vi.fn() }, postingScore: { upsert: vi.fn() } }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
+vi.mock("@/lib/ai/config", () => ({ isAiUsable: async () => false }));
 vi.mock("@/lib/profile-data", () => ({
   loadProfile: async () => ({ basics: { city: "Bangalore", country: "India" }, skills: [], languages: [], experience: [], projects: [], education: [], references: [] }),
 }));

@@ -12,7 +12,7 @@ import { cancel } from "@/lib/jobs/actions";
 import { createApplication, fetchPostingText, startReadingPosting, startWritingDocuments } from "./actions";
 import { NewApplication } from "./new-application";
 
-vi.mock("./actions", () => ({ startReadingPosting: vi.fn(), startWritingDocuments: vi.fn(), createApplication: vi.fn(), fetchPostingText: vi.fn() }));
+vi.mock("./actions", () => ({ startReadingPosting: vi.fn(), startWritingDocuments: vi.fn(), createApplication: vi.fn(), fetchPostingText: vi.fn(), handOffToClaude: vi.fn() }));
 vi.mock("../profile/actions", () => ({ addSkill: vi.fn(async ({ name }: { name: string }) => ({ ok: true, data: { skill: { id: "s9", name }, added: true } })) }));
 vi.mock("@/lib/jobs/actions", () => ({ retry: vi.fn(async () => ({ ok: true, data: null })), cancel: vi.fn(async () => ({ ok: true, data: null })) }));
 vi.mock("@/components/toast", () => ({ toast: vi.fn(), toastResult: (result: unknown) => result }));
@@ -109,9 +109,25 @@ describe("the paste step (E7-1)", () => {
     expect(fetchPostingText).not.toHaveBeenCalled();
   });
 
-  it("points to Settings when no AI provider is set up", () => {
+  it("offers Claude chat, and Settings, when Dossier has no AI model", () => {
     render(<NewApplication {...props} aiReady={false} />);
-    expect(screen.getByRole("link", { name: "Choose one in Settings → AI provider" })).toHaveAttribute("href", "/settings?section=ai");
+    expect(screen.getByRole("button", { name: "Write it with Claude →" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Read the posting →" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "choose a model in Settings → AI provider" })).toHaveAttribute("href", "/settings?section=ai");
+  });
+
+  it("opens Claude chat with the posting handed over", async () => {
+    const { handOffToClaude } = await import("./actions");
+    vi.mocked(handOffToClaude).mockResolvedValue({ ok: true, data: { url: "https://claude.ai/new?q=write" } });
+    const tab = { closed: false, opener: {}, location: { href: "about:blank" }, close: vi.fn() };
+    const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    render(<NewApplication {...props} aiReady={false} />);
+    await userEvent.type(screen.getByLabelText("Job posting"), "Acme is hiring an Android developer.");
+    await userEvent.click(screen.getByRole("button", { name: "Write it with Claude →" }));
+    expect(handOffToClaude).toHaveBeenCalledWith({ posting: "Acme is hiring an Android developer.", postingUrl: "" });
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(tab.location.href).toBe("https://claude.ai/new?q=write");
+    open.mockRestore();
   });
 });
 

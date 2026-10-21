@@ -5,7 +5,7 @@ import { env, type Env } from "@/lib/env";
 import { loadSettings } from "@/lib/settings-data";
 
 import { API_KEY_UNREADABLE, ApiKeyUnreadable, apiKeyState, decryptApiKey } from "./api-key";
-import type { AiSettingsView, KeyState } from "./provider-options";
+import { providerOption, type AiSettingsView, type KeyState } from "./provider-options";
 
 // Which provider to use and how to reach it (E6-1): what's saved in Settings,
 // or else the DOSSIER_AI_* variables, or else the defaults below.
@@ -111,6 +111,26 @@ export function keyStateOf(saved: { provider: AiProvider | null; apiKeyEnc: stri
 }
 
 /** Whether an AI provider has been chosen, in Settings or with DOSSIER_AI_PROVIDER. */
+/**
+ * Whether Dossier's own AI model can actually be called: a provider with its
+ * model and key, and not a local model where Dossier runs serverless (Vercel
+ * can't reach one). Without it, the in-app AI buttons hand the work to Claude
+ * chat through the connector (src/lib/connector/handoff.ts).
+ */
+export async function isAiUsable(): Promise<boolean> {
+  if (!(await isAiConfigured())) return false;
+  try {
+    const config = await loadAiConfig();
+    if (providerOption(config.provider).local && (process.env.VERCEL || process.env.DOSSIER_SERVERLESS === "1")) return false;
+    if (!config.model || config.apiKeyProblem) return false;
+    // Hosted providers that always need a key; an OpenAI-compatible server may not.
+    const needsKey = config.provider === AiProvider.ANTHROPIC || config.provider === AiProvider.MISTRAL;
+    return !needsKey || Boolean(config.apiKey);
+  } catch {
+    return false;
+  }
+}
+
 export async function isAiConfigured(): Promise<boolean> {
   if (env.DOSSIER_AI_PROVIDER) return true;
   return Boolean((await loadSettings()).provider);

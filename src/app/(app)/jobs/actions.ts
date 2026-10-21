@@ -2,8 +2,9 @@
 
 import { z } from "zod";
 
-import { action, ActionError } from "@/lib/action";
-import { isAiConfigured } from "@/lib/ai/config";
+import { action } from "@/lib/action";
+import { isAiUsable } from "@/lib/ai/config";
+import { handOffFoundPosting } from "@/lib/connector/handoff";
 import { fullText } from "@/lib/job-search/find";
 import { foundPostingSchema, JOB_SOURCES, searchQuerySchema } from "@/lib/job-search/search";
 import { findUnfinishedJobs, startJob } from "@/lib/jobs/runner";
@@ -66,8 +67,9 @@ export const restorePosting = action(postingRef.extend({ saved: z.boolean() }), 
 });
 
 /** "Score" (#208): how well a posting fits the profile, in the background; a scoring under way is followed, not started again. */
-export const startScoringPosting = action(z.object({ posting: foundPostingSchema }), async ({ posting }) => {
-  if (!(await isAiConfigured())) throw new ActionError("Choose an AI provider in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector.");
+export const startScoringPosting = action(z.object({ posting: foundPostingSchema }), async ({ posting }): Promise<{ jobId: string } | { handoff: string }> => {
+  // No AI model in Dossier: Claude chat scores it on the user's subscription, through the connector.
+  if (!(await isAiUsable())) return { handoff: await handOffFoundPosting(posting, "score") };
   const key = scoreJobKey(posting);
   const [unfinished] = await findUnfinishedJobs(key);
   return { jobId: unfinished?.id ?? (await startJob(scorePostingJob, { posting }, { key })) };

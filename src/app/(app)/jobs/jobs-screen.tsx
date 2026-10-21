@@ -49,12 +49,14 @@ export type JobsScreenProps = {
   counts: { searches: number; saved: number; dismissed: number };
   /** Now, from the server, so "3 days ago" reads the same on both sides. */
   today: string;
+  /** No AI model in Dossier: Score opens Claude chat, which scores through the connector. */
+  scoreInClaude?: boolean;
 };
 
 const SETTINGS_HREF = "/settings?section=jobs";
 
 /** Find jobs (E14-6, E14-7, E14-10): the search form and a kept search's postings, past searches, or the postings kept from them. */
-export function JobsScreen({ source, countries, view, query, search, missingSearch = false, kept = [], history = [], counts, today }: JobsScreenProps) {
+export function JobsScreen({ source, countries, view, query, search, missingSearch = false, kept = [], history = [], counts, today, scoreInClaude = false }: JobsScreenProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   // A search that didn't work, with what was asked, for Try again.
@@ -82,7 +84,7 @@ export function JobsScreen({ source, countries, view, query, search, missingSear
     return (
       <>
         {header}
-        <PostingResults key={view} mode={view} postings={kept} today={today} />
+        <PostingResults key={view} mode={view} postings={kept} today={today} scoreInClaude={scoreInClaude} />
       </>
     );
   }
@@ -118,7 +120,7 @@ export function JobsScreen({ source, countries, view, query, search, missingSear
         {failed ? (
           <SearchProblem problem={failed.problem.problem} message={failed.problem.message} onRetry={() => run(failed.query)} />
         ) : search ? (
-          <PostingResults key={search.id} mode="search" search={search} today={today} onSearchAgain={() => run(search.query)} searching={pending} />
+          <PostingResults key={search.id} mode="search" search={search} today={today} scoreInClaude={scoreInClaude} onSearchAgain={() => run(search.query)} searching={pending} />
         ) : (
           <p className="px-10 pb-16 text-sm text-muted">
             {missingSearch

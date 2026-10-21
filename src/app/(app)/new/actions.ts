@@ -5,6 +5,7 @@ import { z } from "zod";
 import { JobStatus, Tone } from "@/generated/prisma/enums";
 import { action, ActionError } from "@/lib/action";
 import { createApplicationFromDocuments } from "@/lib/application-create";
+import { handOffPastedPosting } from "@/lib/connector/handoff";
 import { matchSchema } from "@/lib/application-data";
 import { readPostingJob } from "@/lib/jobs/read-posting";
 import { startJob } from "@/lib/jobs/runner";
@@ -16,6 +17,19 @@ import { prisma } from "@/lib/prisma";
 export const startReadingPosting = action(
   z.object({ posting: z.string().trim().min(1, "Paste a job posting first.").max(100_000) }),
   ({ posting }) => startJob(readPostingJob, { posting }),
+);
+
+/**
+ * "Write it with Claude →" (no AI model in Dossier): keeps the posting for the
+ * Claude connector to read and returns the claude.ai chat to open, where
+ * Claude writes the application on the user's own subscription.
+ */
+export const handOffToClaude = action(
+  z.object({
+    posting: z.string().trim().min(1, "Paste a job posting first.").max(100_000),
+    postingUrl: z.string().trim().max(2000),
+  }),
+  async ({ posting, postingUrl }) => ({ url: await handOffPastedPosting({ text: posting, url: /^https?:\/\//i.test(postingUrl) ? postingUrl : "" }) }),
 );
 
 const detailsSchema = z.object({

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { isAiConfigured } from "@/lib/ai/config";
+import { isAiUsable } from "@/lib/ai/config";
 import { DEMO_POSTING } from "@/lib/demo-profile";
 import { postingText } from "@/lib/job-search/search";
 import { prisma } from "@/lib/prisma";
@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: "New application" };
 export default async function NewApplicationPage({ searchParams }: PageProps<"/new">) {
   const { fresh, posting } = await searchParams;
   const [aiReady, applications, settings, fromFindJobs] = await Promise.all([
-    isAiConfigured(),
+    isAiUsable(),
     prisma.application.count({ where: { awaitingReview: false } }),
     loadSettings(),
     // "Start application" on Find jobs (E14-8).

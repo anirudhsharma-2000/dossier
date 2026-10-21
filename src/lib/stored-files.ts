@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 // in the database they survive on hosts without a lasting disk (Vercel) and
 // are the same for every instance of the app.
 
-export type StoredFileKind = "backup" | "download" | "pdf";
+export type StoredFileKind = "backup" | "download" | "pdf" | "paste";
 
 /** Saves a file, replacing one of the same kind and name. */
 export async function storeFile(

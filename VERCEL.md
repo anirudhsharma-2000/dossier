@@ -46,7 +46,7 @@ Use that production address (or your own domain), not the long address of a sing
 
 ## 3. Set Dossier up
 
-- **Settings → AI provider** (optional): Dossier's own AI features (New application, refining in the chat, scoring postings) need an API key. Without one, have Claude chat write your applications through the connector (step 4). Local models don't work on Vercel.
+- **Settings → AI provider** (optional): leave it empty to use your Claude subscription instead. Then **Write it with Claude** on New application and **Score** in Find jobs open a chat in Claude that does the work through the connector (step 4) and saves the result in Dossier. Anthropic doesn't allow apps to sign in with a Claude subscription, so this hand-off through Claude itself is how the subscription is used. Local models don't work on Vercel.
 - **Settings → Job search → JSearch**: your OpenWeb Ninja or RapidAPI key, with the matching host.
 - **Profile**: set your city to **Bangalore** and your country to **India**. Find jobs then starts with Bangalore plus remote jobs across India; untick **Plus remote jobs** for Bangalore only.
 

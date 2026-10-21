@@ -21,7 +21,8 @@ import type { WriteDocumentsResult } from "@/lib/jobs/write-documents";
 
 import { addSkill } from "../profile/actions";
 
-import { createApplication, fetchPostingText, startReadingPosting, startWritingDocuments } from "./actions";
+import { openPendingTab, sendPendingTab } from "../jobs/claude-tab";
+import { createApplication, fetchPostingText, handOffToClaude, startReadingPosting, startWritingDocuments } from "./actions";
 import { DetailsCard } from "./details-card";
 import { createDraftStore } from "./draft-store";
 import { MatchCard } from "./match-card";
@@ -223,6 +224,19 @@ export function NewApplication({ aiReady, samplePosting, defaultTone, fresh = fa
     if (result.ok) update({ step: "reading", readJobId: result.data, readFor: draft.posting.trim(), read: null });
   };
 
+  // No AI model in Dossier: Claude chat writes the application on the user's
+  // subscription, through the connector, and saves it here as a Draft.
+  const writeInClaude = async () => {
+    if (!draft.posting.trim()) return toast("Paste a job posting first.");
+    const chat = openPendingTab();
+    setStarting(true);
+    const result = toastResult(await handOffToClaude({ posting: draft.posting, postingUrl: draft.postingUrl }));
+    setStarting(false);
+    if (!result.ok) return void chat?.close();
+    sendPendingTab(chat, result.data.url);
+    toast("Writing it in Claude. It appears under Applications as a Draft once Claude saves it.");
+  };
+
   // E7-8: the posting's text from its link, to check before reading it.
   const fetchFromLink = async () => {
     if (!draft.postingUrl.trim()) return toast("Enter the link to the posting first.");
@@ -325,11 +339,14 @@ export function NewApplication({ aiReady, samplePosting, defaultTone, fresh = fa
           {draft.step === "paste" && (
             <>
               {!aiReady && (
-                <p role="note" className="rounded-card bg-warning-surface px-4 py-3 text-meta text-warning">
-                  No AI provider is set up yet, so nothing can read the posting.{" "}
-                  <Link href="/settings?section=ai" className="font-medium text-warning underline underline-offset-2">
-                    Choose one in Settings → AI provider
+                <p role="note" className="rounded-card border border-line-card bg-card px-4 py-3 text-meta text-muted">
+                  Dossier has no AI model of its own, so Claude writes this one: <strong className="text-ink">Write it with Claude</strong> opens a
+                  chat in Claude that uses your Claude subscription and your Dossier connector, and saves the resume and cover letter here as a
+                  Draft. To have Dossier write it instead,{" "}
+                  <Link href="/settings?section=ai" className="font-medium text-ink underline underline-offset-2">
+                    choose a model in Settings → AI provider
                   </Link>
+                  .
                 </p>
               )}
               <Card className="flex flex-col gap-5">
@@ -377,12 +394,21 @@ export function NewApplication({ aiReady, samplePosting, defaultTone, fresh = fa
                 ) : (
                   <span />
                 )}
-                <Button
-                  aria-disabled={!draft.posting.trim() || starting || undefined}
-                  onClick={() => void (starting ? undefined : read())}
-                >
-                  Read the posting →
-                </Button>
+                {aiReady ? (
+                  <Button
+                    aria-disabled={!draft.posting.trim() || starting || undefined}
+                    onClick={() => void (starting ? undefined : read())}
+                  >
+                    Read the posting →
+                  </Button>
+                ) : (
+                  <Button
+                    aria-disabled={!draft.posting.trim() || starting || undefined}
+                    onClick={() => void (starting ? undefined : writeInClaude())}
+                  >
+                    Write it with Claude →
+                  </Button>
+                )}
               </div>
             </>
           )}

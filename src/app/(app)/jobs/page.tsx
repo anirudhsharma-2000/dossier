@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { isAiUsable } from "@/lib/ai/config";
 import { loadJobSearchConfig } from "@/lib/job-search/config";
 import { COUNTRIES } from "@/lib/job-search/countries";
 import { defaultSearch, latestRole, queryFromParams, viewFromParams } from "@/lib/job-search/search";
@@ -24,7 +25,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   const view = viewFromParams(params);
   const typed = queryFromParams(params);
   const searchId = typeof params.search === "string" ? params.search : undefined;
-  const [config, timeZone, postingCounts, searches] = await Promise.all([loadJobSearchConfig(), userTimeZone(), countPostings(), countSearches()]);
+  const [config, timeZone, postingCounts, searches, aiReady] = await Promise.all([loadJobSearchConfig(), userTimeZone(), countPostings(), countSearches(), isAiUsable()]);
   const now = new Date();
 
   const search = view === "search" && !typed ? await loadSearch(searchId, { timeZone, now }) : null;
@@ -36,6 +37,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   return (
     <JobsScreen
       source={config.source}
+      scoreInClaude={!aiReady}
       // Named here: the browser's ICU can name a few countries differently from the server's.
       countries={COUNTRIES}
       view={view}

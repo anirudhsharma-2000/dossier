@@ -14,12 +14,13 @@ import { postedAgo, postingKey, type FoundPosting, type PostingState, type Shown
 import { SOURCE_INFO } from "@/lib/job-search/sources";
 
 import { dismissFoundPosting, loadFullText, restorePosting, savePostingForLater, showMorePostings, startScoringPosting, unsavePosting } from "./actions";
+import { openPendingTab, sendPendingTab } from "./claude-tab";
 import { useStartApplication } from "./use-start-application";
 
 /** Narrow windows show the posting above the list. */
 const NARROW = "(max-width: 1023px)";
 
-export type PostingResultsProps = { today: string } & (
+export type PostingResultsProps = { today: string; scoreInClaude?: boolean } & (
   | {
       mode: "search";
       /** The kept search (E14-10). */
@@ -115,8 +116,18 @@ export function PostingResults(props: PostingResultsProps) {
     const key = postingKey(posting);
     if (scoring[key]) return;
     setScoring((current) => ({ ...current, [key]: { jobId: "", step: null } }));
+    // Opened now, while the click still counts: a tab opened after waiting is blocked as a pop-up.
+    const chat = props.scoreInClaude ? openPendingTab() : null;
     const result = toastResult(await startScoringPosting({ posting: withoutState(posting) }));
-    setScoring((current) => (result.ok ? { ...current, [key]: { jobId: result.data.jobId, step: null } } : without(current, key)));
+    if (result.ok && "handoff" in result.data) {
+      // No AI model in Dossier: Claude chat scores it on the user's subscription.
+      sendPendingTab(chat, result.data.handoff);
+      setScoring((current) => without(current, key));
+      toast("Scoring it in Claude. Reload this page when Claude has saved the score.");
+      return;
+    }
+    chat?.close();
+    setScoring((current) => (result.ok && "jobId" in result.data ? { ...current, [key]: { jobId: result.data.jobId, step: null } } : without(current, key)));
   };
 
   const scoringChanged = (key: string, job: JobView<PostingFit>) => {

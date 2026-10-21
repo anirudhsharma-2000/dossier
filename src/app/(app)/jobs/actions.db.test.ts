@@ -33,7 +33,10 @@ vi.mock("@/lib/auth/session", () => ({
 }));
 vi.mock("@/lib/env", () => ({ env: { DOSSIER_SECRET: "a".repeat(32) } }));
 const ai = vi.hoisted(() => ({ ready: true }));
-vi.mock("@/lib/ai/config", () => ({ isAiConfigured: async () => ai.ready }));
+vi.mock("@/lib/ai/config", () => ({ isAiConfigured: async () => ai.ready, isAiUsable: async () => ai.ready }));
+vi.mock("@/lib/connector/handoff", () => ({
+  handOffFoundPosting: async (posting: { externalId: string }, kind: string) => `https://claude.ai/new?q=${kind}-${posting.externalId}`,
+}));
 vi.mock("@/lib/jobs/runner", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/jobs/runner")>()),
   startJob: vi.fn(async () => "score-job"),
@@ -131,8 +134,8 @@ describe("Score (#208)", () => {
     expect(await startScoringPosting({ posting })).toEqual({ ok: true, data: { jobId: running.id } });
   });
 
-  it("says when there's no AI provider to score with", async () => {
+  it("hands the scoring to Claude chat when Dossier has no AI model", async () => {
     ai.ready = false;
-    expect(await startScoringPosting({ posting })).toEqual({ ok: false, error: "Choose an AI provider in Settings → AI provider first, or ask Claude chat to do it through the Dossier connector." });
+    expect(await startScoringPosting({ posting })).toEqual({ ok: true, data: { handoff: "https://claude.ai/new?q=score-job-1" } });
   });
 });
