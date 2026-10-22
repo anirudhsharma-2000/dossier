@@ -12,6 +12,11 @@ import { connectorDraftJob } from "@/lib/connector/draft";
 import { readPastedPosting } from "@/lib/connector/handoff";
 import { saveWrittenApplication, WRITTEN_IN_CLAUDE, writtenDetailsSchema, writtenLetterSchema, writtenMatchSchema, writtenResumeSchema } from "@/lib/connector/write";
 import { fitBand } from "@/lib/fit";
+import { matchLead, MATCH_VERSION } from "@/lib/leads/match";
+import { startLeadsRefresh } from "@/lib/leads/refresh";
+import { getLead, listLeads, upsertLeads, updateLead } from "@/lib/leads/store";
+import { domainOf, emailLabel } from "@/lib/leads/text";
+import { LEAD_PLACES, LEAD_SOURCES, LEAD_STATUSES, leadFilterSchema, type LeadView } from "@/lib/leads/types";
 import { countryCodeFor, countryName } from "@/lib/job-search/countries";
 import { fullText } from "@/lib/job-search/find";
 import { foundPostingSchema, POSTED_WITHIN, postingText, type FoundPosting, type PostedWithin, type SearchQuery, type ShownPosting } from "@/lib/job-search/search";
@@ -118,6 +123,27 @@ async function resolvePosting(source: PostingSource): Promise<ResolvedPosting | 
   return { error: "Give search_id and number, posting_url, or posting_text." };
 }
 
+/** A startup as Claude sees it in a list. */
+function leadLine(lead: LeadView) {
+  return {
+    lead_id: lead.id,
+    company: lead.company,
+    score: lead.score,
+    why: lead.reasons,
+    summary: lead.summary,
+    found_on: lead.source,
+    location: lead.location || undefined,
+    remote: lead.remote ?? undefined,
+    stage: lead.stage || undefined,
+    roles: lead.roles.length ? lead.roles : undefined,
+    posted: lead.postedAt?.slice(0, 10),
+    website: lead.website || undefined,
+    emails: lead.emails.map((entry) => ({ email: entry.email, kind: entry.label, published_at: entry.from || undefined })),
+    links: lead.links,
+    status: lead.status,
+  };
+}
+
 /** The address of a page in Dossier, for links in answers. */
 const linkTo = (origin: string, path: string) => `${origin}${path}`;
 
@@ -127,7 +153,8 @@ export function createDossierServer(origin: string): McpServer {
     {
       instructions:
         "Dossier is the user's own job search app: one profile, tailored resumes and cover letters, and every application tracked. " +
-        "Search jobs with search_jobs (the user looks in Bangalore plus remote jobs in India unless they say otherwise), " +
+        "Search jobs with search_jobs (the user looks in Bangalore plus remote jobs in India unless they say otherwise). " +
+        "For startups to write to directly (hiring on YC or Hacker News, or just funded), use find_startups; write the user a short cold email from facts in the profile, and record it with update_startup once they've sent it. " +
         "and when the user wants to know which fit best, score them against the profile and save the scores with save_job_scores. " +
         "To draft an application, you write it yourself: call get_profile and get_posting, write a tailored resume and cover letter " +
         "from facts in the profile only (never invent experience, employers, numbers or degrees; say what's missing instead), " +
@@ -281,6 +308,155 @@ export function createDossierServer(origin: string): McpServer {
         saved.push({ number: entry.number, posting_id: entry.posting_id, title: posting.title, score: fit.score, band: fitBand(fit.score) });
       }
       return text({ saved, not_found: missing.length > 0 ? missing : undefined, link: linkTo(origin, search_id ? `/jobs?search=${search_id}` : "/jobs?view=saved") });
+    },
+  );
+
+  server.registerTool(
+    "find_startups",
+    {
+      title: "Find startups to write to",
+      description:
+        "Startups the user could write to, from Dossier's Startups list: hiring on Y Combinator or Hacker News 'Who is hiring', or just funded (Inc42, TechCrunch), " +
+        "ranked against the profile, with the email addresses they publish. Filter by words, place, source, minimum match, and whether they have an email.",
+      inputSchema: {
+        query: z.string().max(200).optional().describe("Words to look for, e.g. 'android' or 'fintech'"),
+        place: z.enum(LEAD_PLACES).optional().describe("any, city (the profile's city, e.g. Bengaluru), india or remote"),
+        source: z.enum(LEAD_SOURCES).optional(),
+        min_score: z.number().int().min(0).max(100).optional(),
+        with_email: z.boolean().optional().describe("Only ones with an address to write to"),
+        status: z.enum(LEAD_STATUSES).optional().describe("NEW (default), SAVED, CONTACTED or DISMISSED"),
+        sort: z.enum(["match", "newest"]).optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => {
+      const profile = await loadProfile();
+      const filter = leadFilterSchema.parse({
+        q: input.query ?? "",
+        place: input.place,
+        source: input.source ?? "",
+        minScore: input.min_score,
+        withEmail: input.with_email ?? false,
+        status: input.status,
+        sort: input.sort,
+      });
+      const list = await listLeads(filter, { limit: input.limit ?? 20, city: profile.basics.city });
+      return text({
+        total: list.total,
+        startups: list.leads.map((lead) => leadLine(lead)),
+        note: list.total === 0 && Object.values(list.counts).every((count) => count === 0) ? "The list is empty: call refresh_startups first." : undefined,
+        link: linkTo(origin, "/startups"),
+      });
+    },
+  );
+
+  server.registerTool(
+    "get_startup",
+    {
+      title: "Read a startup",
+      description: "One startup from find_startups with everything Dossier knows: what it does, the hiring post or news, roles, emails it publishes, links and notes.",
+      inputSchema: { lead_id: z.string().min(1) },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ lead_id }) => {
+      const lead = await getLead(lead_id);
+      if (!lead) return failure("There's no such startup in Dossier.");
+      return text({ ...leadLine(lead), details: lead.details.slice(0, 12_000), notes: lead.notes || undefined });
+    },
+  );
+
+  server.registerTool(
+    "update_startup",
+    {
+      title: "Update a startup",
+      description:
+        "Records what happened with a startup: its status (SAVED, CONTACTED once the user has written, DISMISSED), notes, its website, " +
+        "email addresses the company publishes that you found (with where), or your own fit score with reasons. Never add guessed addresses.",
+      inputSchema: {
+        lead_id: z.string().min(1),
+        status: z.enum(LEAD_STATUSES).optional(),
+        notes: z.string().max(5_000).optional(),
+        website: z.url().optional(),
+        emails: z.array(z.object({ email: z.email(), found_at: z.url().describe("The page that publishes it") })).max(10).optional(),
+        score: z.number().int().min(0).max(100).optional(),
+        reasons: z.array(z.string().max(300)).max(4).optional(),
+      },
+      annotations: { readOnlyHint: false, idempotentHint: true },
+    },
+    async ({ lead_id, status, notes, website, emails, score, reasons }) => {
+      const lead = await updateLead(lead_id, {
+        status,
+        notes,
+        website,
+        emails: emails?.map((entry) => ({ email: entry.email.toLowerCase(), label: emailLabel(entry.email), from: entry.found_at })),
+        score: score !== undefined ? { score, reasons: reasons?.length ? reasons : ["Scored by Claude."] } : undefined,
+      });
+      if (!lead) return failure("There's no such startup in Dossier.");
+      return text(leadLine(lead));
+    },
+  );
+
+  server.registerTool(
+    "add_startup",
+    {
+      title: "Add a startup",
+      description:
+        "Adds a startup the user found elsewhere (a Wellfound, Crunchbase, LinkedIn or company page they named) to Dossier's Startups list, scored against the profile. " +
+        "Only add what you looked up for the user, one company at a time, and only email addresses the company publishes.",
+      inputSchema: {
+        company: z.string().min(1).max(200),
+        website: z.url().optional(),
+        summary: z.string().max(1_000).describe("What it does, in a sentence"),
+        details: z.string().max(10_000).optional().describe("More: what it's building, its round, roles it's hiring for"),
+        location: z.string().max(300).optional(),
+        remote: z.boolean().optional(),
+        stage: z.string().max(200).optional().describe("e.g. Seed, Series A, raised $5M"),
+        roles: z.array(z.string().max(160)).max(8).optional(),
+        tags: z.array(z.string().max(60)).max(10).optional(),
+        emails: z.array(z.object({ email: z.email(), found_at: z.url() })).max(10).optional(),
+        links: z.array(z.object({ label: z.string().max(60), url: z.url() })).max(6).optional().describe("e.g. its Wellfound or Crunchbase page, careers page"),
+      },
+      annotations: { readOnlyHint: false, openWorldHint: true },
+    },
+    async (input) => {
+      const externalId = domainOf(input.website ?? "") || input.company.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      if (!externalId) return failure("Give the company's name or website.");
+      const found = {
+        source: "CLAUDE" as const,
+        externalId,
+        company: input.company.trim(),
+        website: input.website ?? "",
+        summary: input.summary.trim(),
+        details: input.details?.trim() ?? "",
+        location: input.location?.trim() ?? "",
+        remote: input.remote ?? null,
+        stage: input.stage?.trim() ?? "",
+        teamSize: null,
+        tags: input.tags ?? [],
+        roles: input.roles ?? [],
+        emails: (input.emails ?? []).map((entry) => ({ email: entry.email.toLowerCase(), label: emailLabel(entry.email), from: entry.found_at })),
+        links: [...(input.website ? [{ label: "Website", url: input.website }] : []), ...(input.links ?? [])],
+        postedAt: new Date().toISOString(),
+      };
+      await upsertLeads([found]);
+      const list = await listLeads(leadFilterSchema.parse({ q: found.company, source: "CLAUDE" }), { limit: 1 });
+      const lead = list.leads[0];
+      const fit = matchLead(found, await loadProfile());
+      return text({ added: true, lead_id: lead?.id, score: lead?.score ?? fit.score, reasons: lead?.reasons ?? fit.reasons, scored_with: MATCH_VERSION, link: linkTo(origin, "/startups?source=CLAUDE") });
+    },
+  );
+
+  server.registerTool(
+    "refresh_startups",
+    {
+      title: "Refresh the startups list",
+      description: "Asks Y Combinator, Hacker News, Inc42 and TechCrunch for new startups now, in the background (a minute or two); it also runs once a day on its own. Call find_startups afterwards.",
+      annotations: { readOnlyHint: false, openWorldHint: true },
+    },
+    async () => {
+      await startLeadsRefresh();
+      return text({ status: "started", next: "Wait a minute or two, then call find_startups." });
     },
   );
 

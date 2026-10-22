@@ -7,6 +7,7 @@ import { lastNightlyBackup, runNightlyBackup } from "@/lib/backup-schedule";
 import { scheduledCheck } from "@/lib/google/sync";
 import { failStaleJobs, findUnfinishedJobs } from "@/lib/jobs/runner";
 import { sweepFinishedJobs } from "@/lib/jobs/retention";
+import { refreshDue, refreshLeads, startLeadsRefresh } from "@/lib/leads/refresh";
 import { logServerError } from "@/lib/log";
 import { prisma } from "@/lib/prisma";
 import { loadSettings } from "@/lib/settings-data";
@@ -63,6 +64,10 @@ export async function runServerlessTick(now = Date.now()): Promise<void> {
   await step("stored files", () => removeExpiredFiles());
   await step("inbox check", () => inboxIfDue(now));
   await step("job agent schedule", () => startDueRun());
+  // The Startups screen's sources, once a day, in the background.
+  await step("startups refresh", async () => {
+    if (await refreshDue(new Date(now))) await startLeadsRefresh();
+  });
   // A missed Cron Job run still gets its backup, a day late at most.
   await step("nightly backup", async () => {
     const last = await lastNightlyBackup();
@@ -73,6 +78,7 @@ export async function runServerlessTick(now = Date.now()): Promise<void> {
 /** The daily Cron Job: the nightly backup, then the same work as a page view. */
 export async function runDailyCron(): Promise<void> {
   await step("nightly backup", () => runNightlyBackup());
+  await step("startups refresh", () => refreshLeads());
   globalForTick.lastTick = undefined;
   await runServerlessTick();
 }

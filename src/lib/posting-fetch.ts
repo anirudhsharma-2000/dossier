@@ -152,6 +152,22 @@ export async function fetchPosting(
   link: string,
   { lookup = guardedLookup, timeoutMs = TIMEOUT_MS }: { lookup?: LookupFunction; timeoutMs?: number } = {},
 ): Promise<FetchedPosting> {
+  const page = await fetchHtml(link, { lookup, timeoutMs });
+  if (!page.ok) return page;
+  const posting = postingFromHtml(page.html);
+  if (!posting) return { ok: false, error: FETCH_MESSAGES.unreadable };
+  return { ok: true, ...posting, url: page.url };
+}
+
+/**
+ * A web page's HTML, with the same guards as fetching a posting: public
+ * addresses only (checked again after every redirect), a time limit and a
+ * size limit. Used for postings and for a startup's own contact pages.
+ */
+export async function fetchHtml(
+  link: string,
+  { lookup = guardedLookup, timeoutMs = TIMEOUT_MS }: { lookup?: LookupFunction; timeoutMs?: number } = {},
+): Promise<{ ok: true; html: string; url: string } | { ok: false; error: string }> {
   let url: URL;
   try {
     url = new URL(link);
@@ -191,9 +207,7 @@ export async function fetchPosting(
 
     const type = String(response.headers["content-type"] ?? "");
     if (type && !/text\/html|application\/xhtml\+xml|text\/plain/i.test(type)) return { ok: false, error: FETCH_MESSAGES.notPage };
-    const posting = postingFromHtml(decode(response.body, type));
-    if (!posting) return { ok: false, error: FETCH_MESSAGES.unreadable };
-    return { ok: true, ...posting, url: url.toString() };
+    return { ok: true, html: decode(response.body, type), url: url.toString() };
   }
 }
 

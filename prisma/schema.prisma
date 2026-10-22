@@ -810,3 +810,62 @@ model StoredFile {
   @@unique([kind, name])
   @@index([kind, createdAt])
 }
+
+// ─── Startups ────────────────────────────────────────────────────────────────
+
+/// Where a startup stands for the user on the Startups screen.
+enum LeadStatus {
+  NEW
+  SAVED
+  CONTACTED
+  DISMISSED
+}
+
+/// A startup worth reaching out to (the Startups screen): one that's hiring
+/// (YC's list, Hacker News "Who is hiring") or just raised money (funding
+/// news), with the contact emails it publishes and how well it fits the
+/// profile. Refreshed daily; what the user did with it is kept.
+model Lead {
+  id              String     @id @default(cuid())
+  /// Where it was found: "YC", "HN", "INC42", "TECHCRUNCH" or "CLAUDE".
+  source          String
+  /// The source's own id for it: a YC slug, an HN comment id, an article link.
+  externalId      String
+  company         String
+  /// The company's own site, "" when unknown.
+  website         String     @default("")
+  /// One line about the company or the news.
+  summary         String     @default("")
+  /// The longer text: a description, the hiring post, the article's start.
+  details         String     @default("")
+  location        String     @default("")
+  remote          Boolean?
+  /// e.g. "YC W24 · Early", or the round from the news.
+  stage           String     @default("")
+  teamSize        Int?
+  /// JSON lists of strings.
+  tags            Json
+  roles           Json
+  /// JSON list of { email, label, from }: published addresses only.
+  emails          Json
+  /// JSON list of { label, url }.
+  links           Json
+  /// When it was posted, launched or announced.
+  postedAt        DateTime?
+  /// 0–100: how well it fits the profile, with why (JSON list of strings).
+  score           Int        @default(0)
+  reasons         Json
+  /// "match@1" for Dossier's own matching, "claude-chat" when Claude scored it.
+  scoredWith      String     @default("")
+  status          LeadStatus @default(NEW)
+  /// When its website was last checked for contact emails.
+  emailsCheckedAt DateTime?
+  notes           String     @default("")
+  /// When a refresh last found it.
+  seenAt          DateTime   @default(now())
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([source, externalId])
+  @@index([status, score])
+}

@@ -68,3 +68,14 @@ Then ask Claude things like "find Android developer jobs in Bangalore or remote"
 - **Time zone.** Vercel's servers run on UTC and `TZ` can't be changed there, so backup file names use UTC.
 
 To update to a newer upstream Dossier, sync the fork on GitHub (**Sync fork**) and Vercel deploys it.
+
+## Startups
+
+**Startups** in the sidebar lists startups worth writing to directly, ranked against your profile, with the contact addresses they publish. It refreshes once a day on its own, or when you press **Refresh**. It reads:
+
+- **Y Combinator**: companies hiring now, from the open daily copy of YC's directory (yc-oss.github.io), kept when they're in India or hire remotely
+- **Hacker News "Who is hiring?"**: this month's posts for India or worldwide-remote roles, through HN's public API (hn.algolia.com); many include an address to apply to
+- **Inc42** and **TechCrunch**: startups that just announced a funding round, from their RSS feeds
+- **The startups' own sites**: the home, careers, jobs, about, contact and team pages, for addresses on the startup's own domain
+
+Dossier never guesses addresses, and never sends anything. **Write the email with Claude** opens a Claude chat that writes a short email from your profile; you send it from your own mail and mark the startup **Contacted**. Wellfound and Crunchbase aren't read: their terms forbid scraping and neither has a free API. Ask Claude to "add [a link] to my startups" for a company you found there.

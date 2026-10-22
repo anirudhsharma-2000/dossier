@@ -63,17 +63,22 @@ describe("the Claude connector at /api/mcp", () => {
     const list = await call({ jsonrpc: "2.0", id: 2, method: "tools/list" }, token);
     const { result } = (await list.json()) as { result: { tools: { name: string }[] } };
     expect(result.tools.map((tool) => tool.name).sort()).toEqual([
+      "add_startup",
       "check_draft",
       "draft_application",
+      "find_startups",
       "get_application",
       "get_posting",
       "get_profile",
+      "get_startup",
       "list_applications",
       "more_jobs",
+      "refresh_startups",
       "save_application",
       "save_job_scores",
       "search_jobs",
       "set_application_status",
+      "update_startup",
     ]);
   });
 
