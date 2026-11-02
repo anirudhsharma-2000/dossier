@@ -36,7 +36,7 @@ export const GET = route(async (request) => {
 export const POST = route(async (request) => {
   const rendered = await renderRequested(request);
   if (rendered instanceof Response) return rendered;
-  return NextResponse.json({ url: `/api/pdf/${holdPdf(rendered.pdf, rendered.fileName)}` });
+  return NextResponse.json({ url: `/api/pdf/${await holdPdf(rendered.pdf, rendered.fileName)}` });
 });
 
 /** The PDF and file name of the document the query asks for, or a 404 response. */

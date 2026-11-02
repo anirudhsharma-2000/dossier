@@ -12,7 +12,7 @@ import { unitsSchema } from "@/lib/application-data";
 import { fitBand } from "@/lib/fit";
 import { countryCodeFor, countryName } from "@/lib/job-search/countries";
 import { fullText } from "@/lib/job-search/find";
-import { DEFAULT_RADIUS_KM, foundPostingSchema, POSTED_WITHIN, postingText, RADII_KM, type FoundPosting, type PostedWithin, type SearchQuery, type ShownPosting } from "@/lib/job-search/search";
+import { DEFAULT_RADIUS_KM, foundPostingSchema, plusRemote, POSTED_WITHIN, postingText, RADII_KM, type FoundPosting, type PostedWithin, type SearchQuery, type ShownPosting } from "@/lib/job-search/search";
 import { getJob, startJob } from "@/lib/jobs/runner";
 import { withoutPrivateParts } from "@/lib/letter-frame";
 import { fetchPosting } from "@/lib/posting-fetch";
@@ -131,7 +131,7 @@ export function createDossierServer(origin: string): McpServer {
     {
       instructions:
         "Dossier is the user's own job search app: one profile, tailored resumes and cover letters, and every application tracked. " +
-        "Search jobs with search_jobs (in the profile's city and country unless the user says otherwise), " +
+        "Search jobs with search_jobs (in the profile's city plus remote jobs across its country unless the user says otherwise), " +
         "and when the user wants to know which fit best, score them against the profile and save the scores with save_job_scores. " +
         "To draft an application, you write it yourself: call get_profile and get_posting, write a tailored resume and cover letter " +
         "from facts in the profile only (never invent experience, employers, numbers or degrees; say what's missing instead), " +
@@ -163,6 +163,10 @@ export function createDossierServer(origin: string): McpServer {
         place: z.string().max(200).optional().describe("City or region. Defaults to the profile's city. Use '' for the whole country."),
         country: z.string().max(60).optional().describe("Country name or ISO code, e.g. 'Germany' or 'de'. Defaults to the profile's country."),
         remote_only: z.boolean().optional().describe("Only remote postings."),
+        plus_remote: z
+          .boolean()
+          .optional()
+          .describe("With a place: also remote postings across the country, e.g. Bangalore plus remote in India. Defaults to true; false for the place only."),
         radius_km: z.literal(RADII_KM).optional(),
         posted_within: z.enum(POSTED).optional().describe("any, day, 3days, week or month. Defaults to month."),
       }),
@@ -179,6 +183,7 @@ export function createDossierServer(origin: string): McpServer {
         country,
         radiusKm: input.radius_km ?? DEFAULT_RADIUS_KM,
         remoteOnly,
+        ...(input.plus_remote ?? true ? { alsoRemote: true } : {}),
         postedWithin: input.posted_within ?? "month",
       };
       const ran = await runSearch(query);
@@ -187,7 +192,7 @@ export function createDossierServer(origin: string): McpServer {
       if (!search) return failure("The search ran, but couldn't be read back. Try again.");
       return text({
         search_id: search.id,
-        searched: `${query.keywords} in ${query.place || countryName(country)}${query.remoteOnly ? " (remote only)" : ""}`,
+        searched: `${query.keywords} in ${query.place || countryName(country)}${query.remoteOnly ? " (remote only)" : plusRemote(query) ? " plus remote" : ""}`,
         found: search.postings.length,
         more_available: search.next !== null,
         postings: search.postings.map((posting, index) => postingLine(posting, index + 1)),

@@ -21,6 +21,8 @@ export async function proxy(request: NextRequest) {
   // The Claude connector (#221) brings its own credentials, an OAuth token,
   // which its routes check; they answer 404 while it's off.
   if (CONNECTOR_PATHS.test(pathname)) return NextResponse.next();
+  // Vercel's daily Cron Job brings its CRON_SECRET, which its route checks.
+  if (pathname === "/api/cron/daily") return NextResponse.next();
 
   const session = await decodeSession(
     request.cookies.get(SESSION_COOKIE)?.value,

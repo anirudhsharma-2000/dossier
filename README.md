@@ -4,6 +4,8 @@
 
 <h1 align="center">Dossier</h1>
 
+> **This fork** is Dossier 1.11 made to run free on Vercel with a Neon database, and searches a city plus remote jobs (Bangalore + remote by default). See **[VERCEL.md](VERCEL.md)** to deploy it.
+
 <p align="center">
   Your job search, on your own server: one profile, a tailored resume and cover letter for every job, and every application tracked from draft to offer.
 </p>

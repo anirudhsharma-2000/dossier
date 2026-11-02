@@ -22,6 +22,8 @@ const OPEN_ROUTES = new Set([
   "src/app/api/oauth/protected-resource/route.ts",
   "src/app/api/oauth/register/route.ts",
   "src/app/api/oauth/token/route.ts",
+  // Vercel's daily Cron Job checks its CRON_SECRET bearer token.
+  "src/app/api/cron/daily/route.ts",
 ]);
 
 const sources = globSync("src/**/*.{ts,tsx}").filter((file) => !/\.test\.tsx?$/.test(file) && !file.startsWith("src/generated/"));
@@ -78,6 +80,10 @@ describe("session checks (E11-5)", () => {
     for (const file of [...OPEN_ROUTES].filter((entry) => /\/api\/(mcp|oauth)\//.test(entry))) {
       expect(read(file), file).toContain("if (!(await connectorSince())) return new Response(null, { status: 404 });");
     }
+  });
+
+  it("checks the cron secret in Vercel's daily Cron Job", () => {
+    expect(read("src/app/api/cron/daily/route.ts")).toContain("authorized(request)");
   });
 
   it("defines every route handler with route()", () => {

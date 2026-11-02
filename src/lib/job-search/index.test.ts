@@ -97,3 +97,42 @@ describe("testSource", () => {
     await expect(testSource("JSEARCH", ninja)).rejects.toMatchObject({ problem: "key" });
   });
 });
+
+describe("searchPostings for a place plus remote", () => {
+  const job = (id: string, title: string) => ({ ...jsearchV2Page.data.jobs[0], job_id: id, job_title: title });
+  const bangalore = { ...EMPTY_QUERY, keywords: "android developer", place: "Bangalore", country: "in", alsoRemote: true };
+
+  it("asks for the place and for remote jobs across the country, and takes turns from each", async () => {
+    const requests = stubFetch(({ url }) =>
+      url.searchParams.get("work_from_home") === "true"
+        ? json({ data: { jobs: [job("r1", "Remote 1"), job("shared", "Both"), job("r2", "Remote 2")], cursor: "rc" } })
+        : json({ data: { jobs: [job("b1", "Bangalore 1"), job("shared", "Both")], cursor: null } }),
+    );
+    const page = await searchPostings("JSEARCH", ninja, bangalore);
+    const queries = requests.map(({ url }) => [url.searchParams.get("query"), url.searchParams.get("work_from_home")]);
+    expect(queries).toContainEqual(["android developer in Bangalore", null]);
+    expect(queries).toContainEqual(["android developer", "true"]);
+    expect(page.postings.map((posting) => posting.externalId)).toEqual(["b1", "r1", "shared", "r2"]);
+
+    // Only the remote half has more: the next page asks only it.
+    expect(page.next).toMatch(/^both:/);
+    requests.length = 0;
+    await searchPostings("JSEARCH", ninja, bangalore, page.next);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url.searchParams.get("cursor")).toBe("rc");
+  });
+
+  it("still shows one half's postings when the other fails", async () => {
+    stubFetch(({ url }) => (url.searchParams.get("work_from_home") === "true" ? json({}, { status: 503 }) : json({ data: { jobs: [job("b1", "Bangalore 1")], cursor: null } })));
+    const page = await searchPostings("JSEARCH", ninja, bangalore);
+    expect(page.postings.map((posting) => posting.externalId)).toEqual(["b1"]);
+    expect(page.next).toBeNull();
+  });
+
+  it("is a plain search without a place, or with Remote only", async () => {
+    const requests = stubFetch(() => json(jsearchV2LastPage));
+    await searchPostings("JSEARCH", ninja, { ...bangalore, place: "" });
+    await searchPostings("JSEARCH", ninja, { ...bangalore, remoteOnly: true });
+    expect(requests).toHaveLength(2);
+  });
+});

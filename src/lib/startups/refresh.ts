@@ -6,6 +6,7 @@ import { defineJob, findUnfinishedJobs, startJob } from "@/lib/jobs/runner";
 import { logServerError } from "@/lib/log";
 import { prisma } from "@/lib/prisma";
 import { loadProfile } from "@/lib/profile-data";
+import { isServerless, SERVERLESS_MAX_SECONDS } from "@/lib/serverless";
 import { saveSettings } from "@/lib/settings-data";
 
 import { SourceError } from "./http";
@@ -25,6 +26,12 @@ export const STARTUPS_JOB_KEY = "startups-refresh";
 const SITE_LOOKUPS = 12;
 /** Different sites read at once; each site's own pages are read one at a time. */
 const SITE_CONCURRENCY = 4;
+/**
+ * On Vercel a refresh must end within the function's time limit: no new
+ * batch of sites starts once this much of it has gone (a batch can take up
+ * to about two minutes). Sites not read yet are read on the next refresh.
+ */
+const SERVERLESS_SITE_BUDGET_MS = (SERVERLESS_MAX_SECONDS - 150) * 1000;
 
 /** Runs both sources, keeps what they found, and looks up addresses for the best new startups. */
 export async function refreshStartups(
@@ -32,6 +39,7 @@ export async function refreshStartups(
   signal: AbortSignal = new AbortController().signal,
   now = new Date(),
 ): Promise<StartupsRefresh> {
+  const started = Date.now();
   const place = placeOf((await loadProfile()).basics);
   const sources: { source: StartupSource; fetch: () => Promise<FoundStartup[]> }[] = [
     { source: "YC", fetch: () => fetchYcStartups(signal) },
@@ -66,6 +74,7 @@ export async function refreshStartups(
   let emailsFound = 0;
   for (let index = 0; index < toCheck.length; index += SITE_CONCURRENCY) {
     signal.throwIfAborted();
+    if (isServerless() && Date.now() - started > SERVERLESS_SITE_BUDGET_MS) break;
     const batch = toCheck.slice(index, index + SITE_CONCURRENCY);
     const checked = await Promise.allSettled(batch.map((startup) => lookUpStartup(startup.id, { now })));
     checked.forEach((result, position) => {

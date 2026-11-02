@@ -16,6 +16,16 @@ vi.mock("@/lib/pdf/render", () => ({ renderPdf: vi.fn() }));
 vi.mock("@/lib/profile-data", () => ({ loadProfileName: vi.fn() }));
 vi.mock("@/lib/settings-data", () => ({ loadSettings: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: { application: { findUnique: vi.fn() } } }));
+// Held PDFs wait in the database; here, in a map.
+const held = vi.hoisted(() => new Map<string, Uint8Array>());
+vi.mock("@/lib/stored-files", () => ({
+  storeFile: async (_kind: string, name: string, data: Uint8Array) => void held.set(name, data),
+  findStoredFile: async (_kind: string, prefix: string) => {
+    const name = [...held.keys()].find((key) => key.startsWith(prefix));
+    return name ? { name, data: held.get(name) } : null;
+  },
+  removeExpiredFiles: async () => 0,
+}));
 
 const get = (query: string) => GET(new NextRequest(`http://localhost:3000/api/pdf${query}`), undefined);
 const post = (query: string) =>

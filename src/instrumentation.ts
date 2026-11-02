@@ -10,25 +10,30 @@ export async function register() {
     const { logServerError } = await import("@/lib/log");
     await recoverInterruptedJobs().catch((error: unknown) => logServerError("startup", error));
 
-    // Finished jobs, with what they were given and wrote, are deleted after a while.
-    const { startJobSweep } = await import("@/lib/jobs/retention");
-    startJobSweep();
+    // On Vercel no process stays up for timers: a daily Cron Job and signed-in
+    // page views run the same work instead (src/lib/schedules.ts).
+    const { isServerless } = await import("@/lib/serverless");
+    if (!isServerless()) {
+      // Finished jobs, with what they were given and wrote, are deleted after a while.
+      const { startJobSweep } = await import("@/lib/jobs/retention");
+      startJobSweep();
 
-    // Nightly backups at 03:00, while they're switched on (E10-7).
-    const { startBackupSchedule } = await import("@/lib/backup-schedule");
-    startBackupSchedule();
+      // Nightly backups at 03:00, while they're switched on (E10-7).
+      const { startBackupSchedule } = await import("@/lib/backup-schedule");
+      startBackupSchedule();
 
-    // The inbox check, while a Google account is connected (E15-3).
-    const { startInboxSchedule } = await import("@/lib/google/sync");
-    startInboxSchedule();
+      // The inbox check, while a Google account is connected (E15-3).
+      const { startInboxSchedule } = await import("@/lib/google/sync");
+      startInboxSchedule();
 
-    // The job agent's daily run, while it's on (E16-4).
-    const { startAgentSchedule } = await import("@/lib/agent/schedule");
-    startAgentSchedule();
+      // The job agent's daily run, while it's on (E16-4).
+      const { startAgentSchedule } = await import("@/lib/agent/schedule");
+      startAgentSchedule();
 
-    // Startups' daily refresh, once it was refreshed by hand and while the screen is in use (#222).
-    const { startStartupsSchedule } = await import("@/lib/startups/schedule");
-    startStartupsSchedule();
+      // Startups' daily refresh, once it was refreshed by hand and while the screen is in use (#222).
+      const { startStartupsSchedule } = await import("@/lib/startups/schedule");
+      startStartupsSchedule();
+    }
 
     // DOSSIER_JOBS_SOURCE=arbeitsagentur: the log says what that choice means (#223).
     const { arbeitsagenturStartupNotice, loadJobSearchConfig } = await import("@/lib/job-search/config");

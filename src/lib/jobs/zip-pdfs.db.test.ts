@@ -1,7 +1,3 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-
 import { unzipSync } from "fflate";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,18 +12,17 @@ vi.mock("@/lib/prisma", async () => {
   db.client = createTestClient();
   return { prisma: db.client };
 });
-const dataDir = vi.hoisted(() => ({ path: "" }));
-vi.mock("@/lib/env", () => ({ env: { get DOSSIER_DATA_DIR() { return dataDir.path; } } }));
 vi.mock("@/lib/pdf/render", () => ({ renderPdf: vi.fn(async (page: string) => new TextEncoder().encode(`%PDF ${page}`)) }));
 vi.mock("@/lib/profile-data", () => ({ loadProfileName: async () => "Jane Doe" }));
 vi.mock("./runner", () => ({ defineJob: <T,>(definition: T) => definition }));
 
 const prisma = () => db.client!;
+const storedZip = async (file: string) => new Uint8Array((await prisma().storedFile.findUniqueOrThrow({ where: { kind_name: { kind: "download", name: file } } })).data);
+const storedZips = async () => (await prisma().storedFile.findMany({ where: { kind: "download" }, select: { name: true } })).map((file) => file.name);
 const steps: string[] = [];
 const context = { id: "test-job", step: async (name: string) => void steps.push(name), signal: new AbortController().signal };
 
 beforeEach(async () => {
-  dataDir.path = await mkdtemp(path.join(tmpdir(), "dossier-zip-"));
   steps.length = 0;
   vi.mocked(renderPdf).mockClear();
   await resetDatabase(prisma());
@@ -41,7 +36,6 @@ beforeEach(async () => {
   await prisma().document.create({ data: { applicationId: "a1", kind: "EMAIL", units: [] } });
 });
 afterAll(async () => {
-  await rm(dataDir.path, { recursive: true, force: true });
   await prisma().$disconnect();
 });
 
@@ -52,7 +46,7 @@ describe("zipPdfsJob (E10-5)", () => {
     expect(renderPdf).toHaveBeenCalledWith("/print/resume/a1");
     expect(renderPdf).toHaveBeenCalledWith("/print/letter/a3");
 
-    const zip = unzipSync(await readFile(path.join(dataDir.path, "downloads", result.file)));
+    const zip = unzipSync(await storedZip(result.file));
     expect(Object.keys(zip).sort()).toEqual([
       "Ledgerly/Jane Doe – Ledgerly – Cover letter.pdf",
       "Ledgerly/Jane Doe – Ledgerly – Resume (2).pdf",
@@ -70,7 +64,7 @@ describe("zipPdfsJob (E10-5)", () => {
     vi.useFakeTimers({ now: Date.now() + 2 * 60 * 60 * 1000, toFake: ["Date"] });
     try {
       const second = await zipPdfsJob.run({}, context);
-      expect(await readdir(path.join(dataDir.path, "downloads"))).toEqual([second.file]);
+      expect(await storedZips()).toEqual([second.file]);
       expect(second.file).not.toBe(first.file);
     } finally {
       vi.useRealTimers();

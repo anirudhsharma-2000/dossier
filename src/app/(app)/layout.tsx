@@ -5,6 +5,8 @@ import { countAgentQueue } from "@/lib/agent/view";
 import { verifySession } from "@/lib/auth/session";
 import { inboxCount } from "@/lib/google/inbox-data";
 import { loadProfileName } from "@/lib/profile-data";
+import { runServerlessTick } from "@/lib/schedules";
+import { isServerless } from "@/lib/serverless";
 import { loadSettings } from "@/lib/settings-data";
 import { COLOR_SCHEME_COOKIE, parseColorScheme, parseSidebarCollapsed, SIDEBAR_COOKIE } from "@/lib/ui-preferences";
 import { rememberBrowserTimeZone, userTimeZone } from "@/lib/time-zone";
@@ -29,6 +31,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   // The browser's zone, for the inbox check, which runs without a request.
   const zone = await userTimeZone();
   after(() => rememberBrowserTimeZone(zone));
+  // On Vercel, page views run what a long-lived server's timers would (src/lib/schedules.ts).
+  if (isServerless()) after(() => runServerlessTick());
 
   const [name, settings, jar] = await Promise.all([loadProfileName(), loadSettings(), cookies()]);
   const userName = name.trim() || "New user";

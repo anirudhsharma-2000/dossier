@@ -1,6 +1,8 @@
 import "server-only";
 
-import { chromium, type Browser } from "playwright-core";
+import { chromium, type Browser, type LaunchOptions } from "playwright-core";
+
+import { isServerless, selfOrigin } from "@/lib/serverless";
 
 import { PRINT_TOKEN_HEADER, signPrintToken } from "./print-token";
 
@@ -9,6 +11,10 @@ import { PRINT_TOKEN_HEADER, signPrintToken } from "./print-token";
 // render and relaunched if it crashes; a few pages print at once and the
 // rest wait their turn. After a while without renders the browser closes to
 // give its memory back, and the next render starts it again.
+//
+// On Vercel there's no Chromium installed: @sparticuz/chromium unpacks one
+// made for serverless functions, and the print pages are opened through the
+// app's public address, since there's no server listening on localhost.
 
 /**
  * Pages printed at the same time; the rest queue. Measured with 2 vCPUs and
@@ -31,18 +37,24 @@ type Pool = {
 const globalForPdf = globalThis as unknown as { pdfPool?: Pool };
 const pool: Pool = (globalForPdf.pdfPool ??= { browser: null, active: 0, queue: [], idleTimer: null });
 
-/** Where the app itself is listening, for Chromium to open print pages. */
+/** Where the app itself is reached, for Chromium to open print pages. */
 function appOrigin(): string {
-  return `http://localhost:${process.env.PORT ?? 3000}`;
+  return selfOrigin();
+}
+
+async function launchOptions(): Promise<LaunchOptions> {
+  if (!isServerless()) {
+    // Docker gives /dev/shm only 64 MB.
+    return { args: ["--disable-dev-shm-usage"] };
+  }
+  const { default: serverlessChromium } = await import("@sparticuz/chromium");
+  return { executablePath: await serverlessChromium.executablePath(), args: serverlessChromium.args, headless: true };
 }
 
 function browser(): Promise<Browser> {
   if (!pool.browser) {
-    const launching = chromium
-      .launch({
-        // Docker gives /dev/shm only 64 MB.
-        args: ["--disable-dev-shm-usage"],
-      })
+    const launching = launchOptions()
+      .then((options) => chromium.launch(options))
       .then((launched) => {
         // A crashed or closed browser is replaced on the next render.
         launched.on("disconnected", () => {

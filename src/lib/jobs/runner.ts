@@ -1,5 +1,6 @@
 import "server-only";
 
+import { waitUntil } from "@vercel/functions";
 import type { z } from "zod";
 
 import { Prisma } from "@/generated/prisma/client";
@@ -9,12 +10,19 @@ import { AiError } from "@/lib/ai/errors";
 import { providerOption } from "@/lib/ai/provider-options";
 import { logServerError } from "@/lib/log";
 import { prisma } from "@/lib/prisma";
+import { isServerless, SERVERLESS_MAX_SECONDS } from "@/lib/serverless";
 
 // Long AI tasks run as background jobs (E6-7): the request that starts one
 // returns at once with its id, the work goes on in this process, and the
 // page follows its named steps (/api/jobs/[id]/events). Progress lives in
 // the Job table, so a reloaded page can pick the job up again. Dossier runs
 // as a single instance, so an in-process queue is enough.
+//
+// On Vercel (isServerless()) there's no lasting process: a job runs at once
+// in the function that started it, kept alive after the response with
+// waitUntil(), for at most SERVERLESS_MAX_SECONDS. Another request may reach
+// another instance, so cancelling goes through the Job row too, and a job
+// whose function ran out of time is marked interrupted when it's next read.
 
 export type JobContext = {
   /** The job's own id, e.g. to link it to the application it makes. */
@@ -49,6 +57,8 @@ export type JobView<R = unknown> = {
 export const JOB_MESSAGES = {
   failed: "Something went wrong while working on this. Try again.",
   interrupted: "Dossier restarted before this finished. Try again.",
+  /** On Vercel: the function ran out of time, or stopped. */
+  timedOut: "This took longer than the server allows (5 minutes) and stopped. Try again.",
   cancelled: "Cancelled.",
 } as const;
 
@@ -85,12 +95,37 @@ export function defineJob<I, R>(definition: JobDefinition<I, R>): JobDefinition<
 const VIEW_FIELDS = { id: true, type: true, status: true, step: true, error: true, result: true } as const;
 
 export async function getJob(id: string): Promise<JobView | null> {
-  return prisma.job.findUnique({ where: { id }, select: VIEW_FIELDS });
+  const job = await prisma.job.findUnique({ where: { id }, select: VIEW_FIELDS });
+  if (job && !isFinished(job) && isServerless() && (await failStaleJobs({ id })) > 0) return getJob(id);
+  return job;
 }
 
 /** The newest job for something on screen, e.g. "application:<id>", to reattach after a reload. */
 export async function findLatestJob(key: string): Promise<JobView | null> {
-  return prisma.job.findFirst({ where: { key }, orderBy: { createdAt: "desc" }, select: VIEW_FIELDS });
+  const job = await prisma.job.findFirst({ where: { key }, orderBy: { createdAt: "desc" }, select: VIEW_FIELDS });
+  if (job && !isFinished(job) && isServerless() && (await failStaleJobs({ id: job.id })) > 0) return getJob(job.id);
+  return job;
+}
+
+/**
+ * On Vercel: a job still queued or running after its function's time is up
+ * can't finish, so it's marked interrupted and the page offers Retry. Some
+ * slack is left for a function that's still writing its result.
+ */
+export async function failStaleJobs(where: { id?: string } = {}, now = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - (SERVERLESS_MAX_SECONDS + 30) * 1000);
+  const { count } = await prisma.job.updateMany({
+    where: {
+      ...where,
+      OR: [
+        { status: JobStatus.RUNNING, startedAt: { lt: cutoff } },
+        { status: JobStatus.QUEUED, createdAt: { lt: cutoff } },
+      ],
+    },
+    data: { status: JobStatus.FAILED, error: JOB_MESSAGES.timedOut, finishedAt: now },
+  });
+  if (count > 0 && where.id) await notify(where.id);
+  return count;
 }
 
 /** Jobs for something on screen that are still queued or running, oldest first, with their input. */
@@ -149,7 +184,11 @@ export async function cancelJob(id: string): Promise<void> {
     await finish(id, { status: JobStatus.FAILED, error: JOB_MESSAGES.cancelled });
     return;
   }
-  state.running.get(id)?.abort();
+  const running = state.running.get(id);
+  if (running) return running.abort();
+  // Running in another instance (Vercel): it stops at its next step, when
+  // it finds the job no longer running.
+  if (isServerless()) await finish(id, { status: JobStatus.FAILED, error: JOB_MESSAGES.cancelled });
 }
 
 /** Stops every queued or running job that works on an application, e.g. before it's deleted. */
@@ -184,13 +223,26 @@ async function finish(
   id: string,
   data: { status: JobStatus; result?: Prisma.InputJsonValue; error?: string },
 ): Promise<void> {
-  const { count } = await prisma.job.updateMany({ where: { id }, data: { ...data, finishedAt: new Date() } });
+  // Only once: a job cancelled from another instance stays cancelled.
+  const { count } = await prisma.job.updateMany({
+    where: { id, status: { in: [JobStatus.QUEUED, JobStatus.RUNNING] } },
+    data: { ...data, finishedAt: new Date() },
+  });
   if (count > 0) await notify(id);
 }
 
 function enqueue(id: string): void {
+  if (isServerless()) return runNow(id);
   if (!state.queue.includes(id)) state.queue.push(id);
   void pump();
+}
+
+/** On Vercel: runs the job in this function, which stays alive until it's done (or out of time). */
+function runNow(id: string): void {
+  const controller = new AbortController();
+  state.running.set(id, controller);
+  // Outside a request (a test, a script) waitUntil() does nothing and the promise runs on its own.
+  waitUntil(execute(id, controller).finally(() => state.running.delete(id)));
 }
 
 async function concurrency(): Promise<number> {
@@ -222,11 +274,19 @@ async function pump(): Promise<void> {
 
 async function execute(id: string, controller: AbortController): Promise<void> {
   try {
-    const job = await prisma.job.update({
-      where: { id },
-      data: { status: JobStatus.RUNNING, startedAt: new Date() },
-      select: { type: true, input: true },
-    });
+    const job = await prisma.job
+      .update({
+        // Only a queued job starts: one cancelled from another instance stays cancelled.
+        where: { id, status: JobStatus.QUEUED },
+        data: { status: JobStatus.RUNNING, startedAt: new Date() },
+        select: { type: true, input: true },
+      })
+      .catch((error: unknown) => {
+        // Cancelled or deleted before it started.
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") return null;
+        throw error;
+      });
+    if (!job) return;
     await notify(id);
     // Job types register when their module loads; make sure they all have.
     await import("./definitions");
@@ -238,7 +298,8 @@ async function execute(id: string, controller: AbortController): Promise<void> {
       signal: controller.signal,
       step: async (name) => {
         // Deleted meanwhile: there's no one left to do it for.
-        const { count } = await prisma.job.updateMany({ where: { id }, data: { step: name } });
+        // Deleted, or cancelled from another instance: stop.
+        const { count } = await prisma.job.updateMany({ where: { id, status: JobStatus.RUNNING }, data: { step: name } });
         if (count === 0) controller.abort();
         else await notify(id);
       },
@@ -261,6 +322,8 @@ async function execute(id: string, controller: AbortController): Promise<void> {
  * can't finish, so they're marked failed and the page offers Retry.
  */
 export async function recoverInterruptedJobs(): Promise<number> {
+  // On Vercel a new instance starts while others are still working.
+  if (isServerless()) return failStaleJobs();
   const { count } = await prisma.job.updateMany({
     where: { status: { in: [JobStatus.QUEUED, JobStatus.RUNNING] } },
     data: { status: JobStatus.FAILED, error: JOB_MESSAGES.interrupted, finishedAt: new Date() },

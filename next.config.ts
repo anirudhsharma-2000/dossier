@@ -2,11 +2,15 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   // The production image runs .next/standalone: the server and only the files
-  // it needs (E12-1).
-  output: "standalone",
+  // it needs (E12-1). Vercel builds its own functions instead.
+  output: process.env.VERCEL ? undefined : "standalone",
   // playwright-core reads some of its own files by computed paths, which the
   // tracing can't follow (browsers.json for one), so all of it goes along.
-  outputFileTracingIncludes: { "/**": ["./node_modules/playwright-core/**/*"] },
+  // On Vercel, so does the packed Chromium that @sparticuz/chromium unpacks.
+  outputFileTracingIncludes: {
+    "/**": ["./node_modules/playwright-core/**/*", ...(process.env.VERCEL ? ["./node_modules/@sparticuz/chromium/**/*"] : [])],
+  },
+  serverExternalPackages: ["@sparticuz/chromium"],
   logging: {
     // In development, Next.js logs every Server Action call with its
     // arguments, which would print the sign-in password (AUTH-1), API keys

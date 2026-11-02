@@ -200,7 +200,7 @@ export async function readReply(emailId: string, signal?: AbortSignal): Promise<
 const globalForSync = globalThis as unknown as { inboxTimer?: ReturnType<typeof setTimeout>; inboxRunning?: boolean };
 
 /** One scheduled check: interviews changed in Google Calendar, then new mail while reading is on. */
-async function scheduledCheck(): Promise<void> {
+export async function scheduledCheck(): Promise<void> {
   if (globalForSync.inboxRunning) return;
   const [connection, settings] = await Promise.all([googleConnection(), loadSettings()]);
   if (connection.status !== "connected") return;
